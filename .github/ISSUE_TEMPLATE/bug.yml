@@ -1,0 +1,47 @@
+name: Bug Report
+description: Report a bug in MetaMCP
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: MetaMCP Version
+      description: Run `metamcp --version` to get this.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Minimal steps to reproduce the bug.
+      placeholder: |
+        1. Create .mcp.json with ...
+        2. Run `metamcp --config .mcp.json`
+        3. Call mcp_call with ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened. Include error messages if any.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Node.js version, OS, and any relevant details.
+      placeholder: |
+        Node.js: 20.x
+        OS: macOS 15 / Ubuntu 24.04 / Windows 11
+    validations:
+      required: false

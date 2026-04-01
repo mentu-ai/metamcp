@@ -1,0 +1,25 @@
+name: Feature Request
+description: Suggest a new feature for MetaMCP
+labels: [enhancement]
+body:
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Why is this feature needed? What problem does it solve?
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the feature you'd like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Example
+      description: Show how the feature would be used (config, CLI, tool call, etc.).
+    validations:
+      required: false

@@ -1,0 +1,56 @@
+{
+  "name": "metamcp",
+  "version": "0.2.0",
+  "description": "A meta-MCP server that collapses N child MCP servers into 4 tools. Intent routing, lazy spawning, connection pooling, semantic search, and sandboxed code execution.",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "metamcp": "dist/index.js",
+    "metamcp-init": "dist/init.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mentu-ai/metamcp.git"
+  },
+  "homepage": "https://github.com/mentu-ai/metamcp#readme",
+  "bugs": {
+    "url": "https://github.com/mentu-ai/metamcp/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc && node --eval \"const fs=require('fs');for(const f of['dist/index.js','dist/init.js']){try{fs.writeFileSync(f,'#!/usr/bin/env node\\n'+fs.readFileSync(f,'utf8'))}catch{}}\"",
+    "start": "node dist/index.js",
+    "test": "npm run build && node dist/__tests__/sandbox.test.js && node dist/__tests__/child-manager.test.js && node dist/__tests__/store.test.js && node dist/__tests__/bpe-tokenizer.test.js && node dist/__tests__/evidence.test.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "mcp-server",
+    "meta-mcp",
+    "ai",
+    "llm",
+    "agent",
+    "tool-routing",
+    "mcp-orchestration",
+    "claude",
+    "automation"
+  ],
+  "author": "Mentu AI (https://github.com/mentu-ai)",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "better-sqlite3": "^12.6.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.3.2",
+    "typescript": "^5.9.3"
+  }
+}
