@@ -1,6 +1,6 @@
 # MetaMCP
 
-[![npm version](https://img.shields.io/npm/v/metamcp)](https://www.npmjs.com/package/metamcp)
+[![npm version](https://img.shields.io/npm/v/@mentu/metamcp)](https://www.npmjs.com/package/@mentu/metamcp)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)](https://www.typescriptlang.org)
@@ -29,14 +29,14 @@ Full documentation at [metamcp.org](https://metamcp.org).
 ## Installation
 
 ```bash
-npx metamcp              # run directly (no install)
-npm install -g metamcp    # or install globally
+npx @mentu/metamcp              # run directly (no install)
+npm install -g @mentu/metamcp    # or install globally
 ```
 
 **Auto-configure your MCP client** (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, and more):
 
 ```bash
-npx metamcp init
+npx @mentu/metamcp init
 ```
 
 > **Note:** MetaMCP optionally uses `better-sqlite3` for semantic search (vector embeddings). This requires a C++ compiler for native compilation. If compilation fails, MetaMCP still works fully with keyword-only search. On macOS, run `xcode-select --install` if you see build errors. On Linux, install `build-essential`.
@@ -63,7 +63,7 @@ npx metamcp init
 **2. Run MetaMCP:**
 
 ```bash
-metamcp --config .mcp.json
+npx @mentu/metamcp --config .mcp.json
 ```
 
 **3. Connect your LLM.** MetaMCP speaks MCP over stdio — point Claude Desktop, Claude Code, or any MCP client at it.
@@ -199,7 +199,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, commit conventions
 ## Links
 
 - [Documentation](https://metamcp.org)
-- [npm package](https://www.npmjs.com/package/metamcp)
+- [npm package](https://www.npmjs.com/package/@mentu/metamcp)
 - [GitHub](https://github.com/mentu-ai/metamcp)
 
 ## License
