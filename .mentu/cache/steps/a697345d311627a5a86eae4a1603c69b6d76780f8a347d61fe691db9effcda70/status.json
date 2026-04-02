@@ -1,0 +1,14 @@
+{
+  "cost" : 1.35799175,
+  "duration" : 396,
+  "exitCode" : 0,
+  "label" : "docs-content-guides",
+  "loopComplete" : true,
+  "model" : "claude-opus-4-6",
+  "retry" : 0,
+  "sessionId" : "run_metamcp-docs_1775092382",
+  "status" : "OK",
+  "success" : true,
+  "timestamp" : "2026-04-02T01:27:19Z",
+  "turns" : 44
+}
