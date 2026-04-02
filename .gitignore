@@ -15,3 +15,6 @@ node_modules/
 
 # MetaMCP data directory
 .metamcp/
+
+# Docs site (deployed separately)
+docs-site/
