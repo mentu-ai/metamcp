@@ -28,6 +28,10 @@ export type ServiceCriticality = 'vital' | 'optional';
 
 export type TransportType = 'stdio' | 'http' | 'sse';
 
+export type ServerLifecycle =
+  | { mode: 'keep-alive'; idleTimeoutMs?: number }
+  | { mode: 'ephemeral' };
+
 export interface ServerConfig {
   name: string;
   command: string;
@@ -38,6 +42,7 @@ export interface ServerConfig {
   headers?: Record<string, string>;
   oauth?: boolean;
   timeoutMs?: number;
+  lifecycle?: ServerLifecycle;
   criticality: ServiceCriticality;
 }
 

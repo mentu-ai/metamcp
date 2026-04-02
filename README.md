@@ -8,6 +8,8 @@
 
 MetaMCP is a meta-MCP server that sits in front of N child MCP servers, collapsing hundreds of tools into 4 meta-tools (~1,000 schema tokens). Built to be **composable**, **lazy**, **isolated**, and **fast**.
 
+It connects to local servers over stdio and remote servers over HTTP or SSE, auto-discovers configurations from your installed editors, classifies errors intelligently, and caches schemas to disk for near-instant cold starts.
+
 ## How It Works
 
 ```
@@ -198,7 +200,27 @@ MetaMCP reads `.mcp.json` — the same format used by Claude Desktop and Claude 
 }
 ```
 
+**Server lifecycle (keep-alive with idle timeout):**
+
+```json
+{
+  "mcpServers": {
+    "database": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sqlite", "/path/to/db"],
+      "lifecycle": { "mode": "keep-alive", "idleTimeoutMs": 600000 }
+    },
+    "one-shot": {
+      "command": "/usr/local/bin/converter",
+      "lifecycle": "ephemeral"
+    }
+  }
+}
+```
+
 MetaMCP supports three transport types: `stdio` (local process, default), `http` (Streamable HTTP), and `sse` (Server-Sent Events). Servers with a `url` field use HTTP by default. Set `transportType` to `sse` for SSE servers. OAuth triggers a browser-based authorization flow on first connect, with tokens persisted at `~/.metamcp/oauth/`.
+
+Servers can declare a `lifecycle` to control idle behavior. `keep-alive` servers are never evicted by the global idle timeout (optionally with a per-server `idleTimeoutMs`). `ephemeral` servers are torn down as soon as they go idle. Without a lifecycle declaration, servers follow the default pool timeout.
 
 ## CLI Options
 
@@ -209,6 +231,7 @@ MetaMCP supports three transport types: `stdio` (local process, default), `http`
 | `--idle-timeout <ms>` | `300000` | Idle connection timeout (ms) |
 | `--failure-threshold <n>` | `5` | Circuit breaker consecutive failures |
 | `--cooldown <ms>` | `30000` | Circuit breaker cooldown (ms) |
+| `--import` | off | Import server configs from installed editors (Cursor, Claude, VS Code, Windsurf, Codex, OpenCode) |
 | `--help` | | Show help |
 | `--version` | | Show version |
 
@@ -218,7 +241,11 @@ MetaMCP manages child server lifecycles with:
 
 - **Connection pool** — bounded pool with LIFO idle list and configurable upper/lower bounds
 - **Lazy spawning** — child servers start on first use, not at boot
-- **Circuit breaker** — per-server failure tracking with automatic cooldown
+- **Circuit breaker** — per-server failure tracking with automatic cooldown; errors are classified (`auth`, `offline`, `http`, `stdio-exit`) so only transient failures trip the breaker
+- **Error classification** — connection errors are categorized automatically; auth failures (401/403) are logged but never count toward circuit breaker thresholds
+- **Lifecycle declarations** — servers declare `keep-alive` or `ephemeral` behavior; keep-alive servers survive idle sweeps, ephemeral servers are torn down immediately
+- **Schema caching** — tool schemas are persisted to `~/.metamcp/cache/` for faster cold starts; stale caches are refreshed transparently on reconnect
+- **Config import** — `--import` discovers MCP server configs from Cursor, Claude Desktop, Claude Code, VS Code, Windsurf, Codex, and OpenCode
 - **LIFO eviction** — when the pool is full, the oldest idle connection is evicted first
 - **V8 sandbox** — `mcp_execute` runs in a locked-down `vm.Context` with frozen prototypes, no `eval`, no `require`, no network access
 - **Multi-transport** — stdio for local servers, Streamable HTTP and SSE for remote servers, with OAuth support

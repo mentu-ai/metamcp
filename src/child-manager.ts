@@ -5,6 +5,8 @@ import { McpClient } from './mcp-client.js';
 import { ToolCatalog } from './catalog.js';
 import type { CatalogOptions } from './catalog.js';
 import { CircuitBreaker } from './circuit-breaker.js';
+import { analyzeConnectionError, isTransientIssue } from './error-classifier.js';
+import { readSchemaCache, writeSchemaCache, isCacheStale } from './schema-cache.js';
 import { log } from './log.js';
 
 const MAX_CHILDREN = 1024;
@@ -107,11 +109,23 @@ export class ChildManager extends EventEmitter {
     this.children.set(config.name, child);
     this.setState(child, ConnectionState.CONNECTING);
 
+    // Pre-populate catalog from disk cache for faster cold start
+    const cached = readSchemaCache(config.name);
+    if (cached) {
+      this.catalog.registerServer(config.name, cached.tools);
+    }
+
     try {
       await client.connect();
       this.setState(child, ConnectionState.ACTIVE);
       const tools = await client.listTools();
       this.catalog.registerServer(config.name, tools);
+
+      // Update disk cache if stale
+      if (!cached || isCacheStale(cached.tools, tools)) {
+        writeSchemaCache(config.name, tools);
+      }
+
       this.setState(child, ConnectionState.IDLE);
       return tools;
     } catch (err) {
@@ -157,8 +171,19 @@ export class ChildManager extends EventEmitter {
       child.circuitBreaker.recordSuccess();
       return result;
     } catch (err) {
+      const issue = analyzeConnectionError(err);
       this.setState(child, ConnectionState.FAILED);
-      child.circuitBreaker.recordFailure();
+
+      // Only transient errors count toward circuit breaker.
+      // Auth errors are not transient — tripping the breaker won't help.
+      if (isTransientIssue(issue)) {
+        child.circuitBreaker.recordFailure();
+      } else {
+        log('info', 'non-transient error, skipping circuit breaker', {
+          server: serverName,
+          kind: issue.kind,
+        });
+      }
 
       // Retry once on crash (spawn → retry)
       if (child.config.criticality === 'vital' || child.restartCount < 1) {
@@ -172,10 +197,13 @@ export class ChildManager extends EventEmitter {
           this.setState(fresh, ConnectionState.IDLE);
           fresh.circuitBreaker.recordSuccess();
           return result;
-        } catch {
+        } catch (retryErr) {
+          const retryIssue = analyzeConnectionError(retryErr);
           const failed = this.children.get(serverName);
           if (failed) this.setState(failed, ConnectionState.FAILED);
-          this.children.get(serverName)?.circuitBreaker.recordFailure();
+          if (isTransientIssue(retryIssue)) {
+            this.children.get(serverName)?.circuitBreaker.recordFailure();
+          }
           throw err;
         }
       }
@@ -307,7 +335,7 @@ export class ChildManager extends EventEmitter {
    */
   private sweepIdle(): void {
     const now = Date.now();
-    const cutoff = now - this.pool.idleTimeoutMs;
+    const globalCutoff = now - this.pool.idleTimeoutMs;
     for (let i = this.idleList.length - 1; i >= 0; i--) {
       // min_pool_size guard
       if (this.pool.minPoolSize > 0 && this.getActiveChildCount() <= this.pool.minPoolSize) {
@@ -319,7 +347,23 @@ export class ChildManager extends EventEmitter {
         this.idleList.splice(i, 1);
         continue;
       }
-      if (child.idleSince > 0 && child.idleSince < cutoff) {
+
+      // keep-alive servers skip idle eviction unless they have their own timeout
+      const lifecycle = child.config.lifecycle;
+      if (lifecycle?.mode === 'keep-alive') {
+        if (!lifecycle.idleTimeoutMs) continue; // no timeout = never evict
+        const perServerCutoff = now - lifecycle.idleTimeoutMs;
+        if (child.idleSince > 0 && child.idleSince < perServerCutoff) {
+          log('info', 'keep-alive idle timeout', { server: name, idleTimeoutMs: lifecycle.idleTimeoutMs });
+          this.setState(child, ConnectionState.CLOSED);
+          child.client.detach();
+          this.catalog.removeServer(name);
+        }
+        continue;
+      }
+
+      // ephemeral or default: use global idle timeout
+      if (child.idleSince > 0 && child.idleSince < globalCutoff) {
         log('info', 'idle timeout eviction', { server: name, idleSince: child.idleSince });
         this.setState(child, ConnectionState.CLOSED);
         child.client.detach();

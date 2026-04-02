@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { ServerConfig, TransportType } from './types.js';
+import type { ServerConfig, ServerLifecycle, TransportType } from './types.js';
 import { log } from './log.js';
 
 interface McpJsonEntry {
@@ -12,6 +12,7 @@ interface McpJsonEntry {
   headers?: Record<string, string>;
   oauth?: boolean;
   timeoutMs?: number;
+  lifecycle?: string | { mode: string; idleTimeoutMs?: number };
 }
 
 interface McpJsonFile {
@@ -66,9 +67,26 @@ export function loadConfig(configPath?: string): ServerConfig[] {
     if (entry.headers) config.headers = entry.headers;
     if (entry.oauth) config.oauth = entry.oauth;
     if (entry.timeoutMs) config.timeoutMs = entry.timeoutMs;
+    if (entry.lifecycle) config.lifecycle = parseLifecycle(entry.lifecycle);
 
     result.push(config);
   }
 
   return result;
+}
+
+function parseLifecycle(raw: string | { mode: string; idleTimeoutMs?: number }): ServerLifecycle | undefined {
+  if (typeof raw === 'string') {
+    if (raw === 'keep-alive') return { mode: 'keep-alive' };
+    if (raw === 'ephemeral') return { mode: 'ephemeral' };
+    return undefined;
+  }
+  if (raw.mode === 'keep-alive') {
+    const timeout = typeof raw.idleTimeoutMs === 'number' && raw.idleTimeoutMs > 0
+      ? Math.trunc(raw.idleTimeoutMs)
+      : undefined;
+    return timeout ? { mode: 'keep-alive', idleTimeoutMs: timeout } : { mode: 'keep-alive' };
+  }
+  if (raw.mode === 'ephemeral') return { mode: 'ephemeral' };
+  return undefined;
 }

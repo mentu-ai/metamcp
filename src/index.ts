@@ -8,6 +8,7 @@ import {
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { loadConfig } from './config.js';
+import { discoverExternalServers } from './config-imports.js';
 import { ChildManager } from './child-manager.js';
 import { IntentRouter } from './intent.js';
 import { TrustPolicy } from './trust.js';
@@ -26,6 +27,7 @@ interface CliOptions {
   idleTimeout: number;
   failureThreshold: number;
   cooldown: number;
+  importEditors: boolean;
 }
 
 function readPackageVersion(): string {
@@ -55,6 +57,7 @@ Options:
   --idle-timeout <ms>        Idle connection timeout in ms (default: 300000)
   --failure-threshold <n>    Circuit breaker consecutive failures (default: 5)
   --cooldown <ms>            Circuit breaker cooldown in ms (default: 30000)
+  --import                   Auto-discover servers from installed editors
   --help                     Show this help message
   --version                  Show version number
 `;
@@ -67,6 +70,7 @@ function parseArgs(argv: string[]): CliOptions {
     idleTimeout: 300_000,
     failureThreshold: 5,
     cooldown: 30_000,
+    importEditors: false,
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -94,6 +98,9 @@ function parseArgs(argv: string[]): CliOptions {
         break;
       case '--cooldown':
         opts.cooldown = Number(argv[++i]);
+        break;
+      case '--import':
+        opts.importEditors = true;
         break;
       default:
         process.stderr.write(`Unknown option: ${arg}\n`);
@@ -146,6 +153,7 @@ const childManager = new ChildManager(
 const intentRouter = new IntentRouter();
 const trustPolicy = new TrustPolicy();
 let serverConfigs: ServerConfig[] = [];
+
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
@@ -495,6 +503,24 @@ function computeRegistryConfidence(intent: string, name: string, description: st
 
 async function main() {
   serverConfigs = loadConfig(cliOptions.configPath);
+
+  // Auto-discover servers from installed editors when --import is set
+  if (cliOptions.importEditors) {
+    const discovered = discoverExternalServers(process.cwd());
+    const localNames = new Set(serverConfigs.map(s => s.name));
+    let importCount = 0;
+    for (const [name, { config, source }] of discovered) {
+      if (!localNames.has(name)) {
+        serverConfigs.push(config);
+        importCount++;
+        log('info', 'imported server from editor config', { name, source });
+      }
+    }
+    if (importCount > 0) {
+      log('info', 'editor import complete', { imported: importCount, total: serverConfigs.length });
+    }
+  }
+
   log('info', 'config loaded', {
     serverCount: serverConfigs.length,
     maxConnections: cliOptions.maxConnections,
