@@ -1,0 +1,23 @@
+Large task — I'll scaffold the MetaMCP docs site step by step. Let me start by exploring the source template and setting up the target directory.Good, I have the full picture. Let me now copy the template files and read the key source files I'll need to modify.Now let me read the key source files in parallel so I can modify them.Now let me read the remaining files I need to modify.I have all the source files. Now I'll execute all modifications. Let me start with the structural changes and rebranding in parallel.Now let me create all the new/modified files in parallel.Now let me do all the rebranding edits in parallel.Now let me do all the major rebranding edits in parallel.Now the remaining files: sitemap, robots, redirects, package.json, page.tsx, not-found.tsx, and content placeholders.Need to read robots.txt and _redirects first, then create content placeholders.Now let me create all 20 placeholder content files.All 20 content files created. Now let me check if there are any remaining Crawlio references in files I might have missed, then install and build.Clean — no Crawlio references remain. Let me also check if there are any imports of `PinCrawlioPopup` or the removed `Image` in files that need it removed.Now let me also check if there are any references to the deleted route directories or apple images that might cause build issues.Let me check the docs layout for any remaining Crawlio references.Clean. Now let's install and build.Build succeeded. Let me verify the output files.Let me check the actual output structure — Next.js 16 might use a different layout.Next.js 16 outputs `.html` files directly rather than `index.html` in subdirectories. Let me verify the actual files exist.All verification checks pass. Build exited 0, all pages generated successfully.
+
+**Summary of what was done:**
+
+1. Copied template from Crawlio docs-site (excluding `PinCrawlioPopup.tsx`, image assets, `node_modules/`, `out/`, `.next/`, `content/`)
+2. Removed Crawlio-specific route groups (`mcp/`, `cli/`, `browser-agent/`, `skills/`, `docs/`)
+3. Created MetaMCP route groups (`concepts/`, `guides/`, `reference/`) with proper page files
+4. Rewrote `docs-nav.ts` with 4 groups: Getting Started, Concepts, Guides, Reference (20 pages total)
+5. Rebranded `layout.tsx` — MetaMCP metadata, simplified icons
+6. Rebranded `DocsHeader.tsx` — text logo, GitHub nav/CTA, removed Apple icon
+7. Replaced `DocsHomePage.tsx` with minimal placeholder
+8. Rebranded `DocPageContent.tsx` footer — Apache-2.0 license
+9. Rebranded `JsonLd.tsx` — MetaMCP org, updated slug sets
+10. Updated `content.ts` copy URL to `metamcp.org`
+11. Updated `generate-sitemap.mjs` with MetaMCP navigation
+12. Updated `robots.txt` and `_redirects`
+13. Updated `package.json` name to `metamcp-docs`
+14. Created 20 placeholder markdown files in `content/docs/`
+15. Rebranded `page.tsx` and `not-found.tsx`
+
+Build output: 27 static pages generated in `out/` (Next.js 16 uses `.html` files directly rather than `index.html` subdirectories).
+
+STEP_COMPLETE
