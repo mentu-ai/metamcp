@@ -6,11 +6,9 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)](https://www.typescriptlang.org)
 [![CI](https://github.com/mentu-ai/metamcp/actions/workflows/ci.yml/badge.svg)](https://github.com/mentu-ai/metamcp/actions/workflows/ci.yml)
 
-MetaMCP is a meta-MCP server that sits in front of N child MCP servers, collapsing hundreds of tools into 4 meta-tools (~1,000 schema tokens). Built to be **composable**, **lazy**, **isolated**, and **fast**.
+MetaMCP connects all your MCP servers through one. Your model sees 4 tools instead of hundreds.
 
-It connects to local servers over stdio and remote servers over HTTP or SSE, auto-discovers configurations from your installed editors, classifies errors intelligently, and caches schemas to disk for near-instant cold starts.
-
-## How It Works
+Think of it like a power strip for MCP servers. Plug in as many as you need -- playwright, databases, GitHub, custom tools -- and your LLM talks to one server that handles everything behind the scenes.
 
 ```
                         ┌─── playwright (52 tools)
@@ -22,30 +20,30 @@ LLM ──► MetaMCP ────────┼─── fetch (3 tools)
                         └─── ... N more servers
 ```
 
-Your LLM sees 4 tools. MetaMCP handles discovery, routing, connection lifecycle, and sandboxed execution across all child servers.
+## Why MetaMCP?
 
-## Documentation
+Every MCP server you add registers its tool schemas with the LLM. Each schema eats context tokens. At 5 servers with 20 tools each, that's ~15,000 tokens spent on schemas alone -- every single request.
 
-Full documentation at [metamcp.org](https://metamcp.org).
+MetaMCP collapses all of that into 4 tools (~1,000 tokens). That cost stays constant whether you run 3 servers or 30. Less token overhead, better tool selection accuracy, more room for actual work.
 
-## Installation
+Beyond token savings, MetaMCP handles the things you shouldn't have to think about: connection pooling, process lifecycle, error recovery, schema caching, and transport differences between local and remote servers.
+
+## Quick Start
+
+**Install and run:**
 
 ```bash
 npx @mentu/metamcp              # run directly (no install)
 npm install -g @mentu/metamcp    # or install globally
 ```
 
-**Auto-configure your MCP client** (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, and more):
+**Auto-configure your editor** (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, and more):
 
 ```bash
 npx @mentu/metamcp init
 ```
 
-> **Note:** MetaMCP optionally uses `better-sqlite3` for semantic search (vector embeddings). This requires a C++ compiler for native compilation. If compilation fails, MetaMCP still works fully with keyword-only search. On macOS, run `xcode-select --install` if you see build errors. On Linux, install `build-essential`.
-
-## Quick Start
-
-**1. Create a `.mcp.json` in your project root:**
+**Or create a `.mcp.json` manually:**
 
 ```json
 {
@@ -62,64 +60,45 @@ npx @mentu/metamcp init
 }
 ```
 
-**2. Run MetaMCP:**
-
 ```bash
 npx @mentu/metamcp --config .mcp.json
 ```
 
-**3. Connect your LLM.** MetaMCP speaks MCP over stdio — point Claude Desktop, Claude Code, or any MCP client at it.
+That's it. MetaMCP speaks MCP over stdio -- point any MCP client at it.
 
-## Tools
+> **Note:** MetaMCP optionally uses `better-sqlite3` for semantic search. This requires a C++ compiler. If compilation fails, MetaMCP still works with keyword-only search. On macOS: `xcode-select --install`. On Linux: `apt install build-essential`.
 
-### `mcp_discover` — Search & list
+## The 4 Tools
 
-Search tool catalogs across all child servers. Without a query, returns server status and tool counts.
+Instead of exposing every tool from every server, MetaMCP gives the LLM exactly 4:
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `query` | string | no | Search query for tools |
-| `server` | string | no | Filter to a specific server |
+### `mcp_discover` -- Find tools
+
+Search tool catalogs across all connected servers. Without a query, returns server status and tool counts.
 
 ```json
 { "query": "screenshot" }
 ```
 
-### `mcp_provision` — Intent-based routing
+### `mcp_provision` -- Get what you need
 
-Describe what you need and MetaMCP resolves the right server. Searches local catalogs first, then the npm registry for installable MCP servers.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `intent` | string | yes | What capability you need |
-| `context` | string | no | Additional context for resolution |
-| `autoProvision` | boolean | no | Auto-provision if trusted (default: false) |
+Describe a capability and MetaMCP resolves the right server. It searches local catalogs first, then the npm registry for installable servers.
 
 ```json
 { "intent": "I need to crawl a website and extract links" }
 ```
 
-### `mcp_call` — Forward to child server
+### `mcp_call` -- Use a tool
 
-Forward a tool call to a specific child server. Retries once on crash for vital servers.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `server` | string | yes | Target server name |
-| `tool` | string | yes | Tool name to call |
-| `args` | object | no | Arguments to pass to the tool |
+Forward a tool call to a specific server. MetaMCP handles connection management and retries on crash.
 
 ```json
 { "server": "playwright", "tool": "browser_navigate", "args": { "url": "https://example.com" } }
 ```
 
-### `mcp_execute` — Sandboxed code execution
+### `mcp_execute` -- Write code
 
-Execute code in a V8 sandbox with access to all provisioned servers. Supports `async`/`await`, `sleep(ms)`, and `console.log`. No access to `process`, `require`, `fs`, or the network.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `code` | string | yes | Code to execute |
+Run JavaScript in a V8 sandbox with access to all provisioned servers. Compose multi-step workflows, loops, and conditionals in a single call.
 
 ```json
 { "code": "const result = await servers.sqlite.call('query', { sql: 'SELECT count(*) FROM users' }); return result;" }
@@ -127,45 +106,17 @@ Execute code in a V8 sandbox with access to all provisioned servers. Supports `a
 
 ## Configuration
 
-MetaMCP reads `.mcp.json` — the same format used by Claude Desktop and Claude Code.
+MetaMCP reads `.mcp.json` -- the same format used by Claude Desktop and Claude Code.
 
-**npx package:**
-
-```json
-{
-  "mcpServers": {
-    "playwright": {
-      "command": "npx",
-      "args": ["-y", "@playwright/mcp@latest"]
-    }
-  }
-}
-```
-
-**Local binary:**
+**Local server:**
 
 ```json
 {
   "mcpServers": {
     "my-server": {
       "command": "/usr/local/bin/my-mcp-server",
-      "args": ["--port", "8080"]
-    }
-  }
-}
-```
-
-**With environment variables:**
-
-```json
-{
-  "mcpServers": {
-    "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": {
-        "GITHUB_TOKEN": "ghp_..."
-      }
+      "args": ["--port", "8080"],
+      "env": { "API_KEY": "..." }
     }
   }
 }
@@ -179,15 +130,13 @@ MetaMCP reads `.mcp.json` — the same format used by Claude Desktop and Claude 
     "remote-tools": {
       "url": "https://mcp.example.com/sse",
       "transportType": "sse",
-      "headers": {
-        "Authorization": "Bearer your-token"
-      }
+      "headers": { "Authorization": "Bearer your-token" }
     }
   }
 }
 ```
 
-**Remote server (Streamable HTTP) with OAuth:**
+**Remote server (HTTP) with OAuth:**
 
 ```json
 {
@@ -200,7 +149,7 @@ MetaMCP reads `.mcp.json` — the same format used by Claude Desktop and Claude 
 }
 ```
 
-**Server lifecycle (keep-alive with idle timeout):**
+**Server lifecycle:**
 
 ```json
 {
@@ -218,9 +167,18 @@ MetaMCP reads `.mcp.json` — the same format used by Claude Desktop and Claude 
 }
 ```
 
-MetaMCP supports three transport types: `stdio` (local process, default), `http` (Streamable HTTP), and `sse` (Server-Sent Events). Servers with a `url` field use HTTP by default. Set `transportType` to `sse` for SSE servers. OAuth triggers a browser-based authorization flow on first connect, with tokens persisted at `~/.metamcp/oauth/`.
+Three transport types: `stdio` (local, default), `http` (Streamable HTTP), and `sse` (Server-Sent Events). OAuth triggers a browser flow on first connect, with tokens saved to `~/.metamcp/oauth/`.
 
-Servers can declare a `lifecycle` to control idle behavior. `keep-alive` servers are never evicted by the global idle timeout (optionally with a per-server `idleTimeoutMs`). `ephemeral` servers are torn down as soon as they go idle. Without a lifecycle declaration, servers follow the default pool timeout.
+Lifecycle controls idle behavior: `keep-alive` servers persist, `ephemeral` servers tear down immediately after use, and servers without a declaration follow the default pool timeout.
+
+## What MetaMCP handles for you
+
+- **Connection pool** -- bounded pool with LIFO idle eviction. Servers start lazily on first use.
+- **Circuit breaker** -- per-server failure tracking. Errors are classified: auth failures (401/403) never trip the breaker, only transient errors count.
+- **Schema caching** -- tool schemas persist to disk for fast cold starts. Stale caches refresh transparently.
+- **Config import** -- `--import` discovers servers from Cursor, Claude Desktop, Claude Code, VS Code, Windsurf, Codex, and OpenCode.
+- **V8 sandbox** -- `mcp_execute` runs in a locked-down context. No `eval`, no `require`, no network access.
+- **Multi-transport** -- stdio, HTTP, and SSE with OAuth. The model doesn't know the difference.
 
 ## CLI Options
 
@@ -228,37 +186,23 @@ Servers can declare a `lifecycle` to control idle behavior. `keep-alive` servers
 |------|---------|-------------|
 | `--config <path>` | `.mcp.json` | Path to config file |
 | `--max-connections <n>` | `20` | Connection pool max size |
-| `--idle-timeout <ms>` | `300000` | Idle connection timeout (ms) |
-| `--failure-threshold <n>` | `5` | Circuit breaker consecutive failures |
-| `--cooldown <ms>` | `30000` | Circuit breaker cooldown (ms) |
-| `--import` | off | Import server configs from installed editors (Cursor, Claude, VS Code, Windsurf, Codex, OpenCode) |
-| `--help` | | Show help |
-| `--version` | | Show version |
+| `--idle-timeout <ms>` | `300000` | Idle connection timeout |
+| `--failure-threshold <n>` | `5` | Circuit breaker failures before trip |
+| `--cooldown <ms>` | `30000` | Circuit breaker cooldown |
+| `--import` | off | Import configs from installed editors |
 
-## Architecture
+## Documentation
 
-MetaMCP manages child server lifecycles with:
-
-- **Connection pool** — bounded pool with LIFO idle list and configurable upper/lower bounds
-- **Lazy spawning** — child servers start on first use, not at boot
-- **Circuit breaker** — per-server failure tracking with automatic cooldown; errors are classified (`auth`, `offline`, `http`, `stdio-exit`) so only transient failures trip the breaker
-- **Error classification** — connection errors are categorized automatically; auth failures (401/403) are logged but never count toward circuit breaker thresholds
-- **Lifecycle declarations** — servers declare `keep-alive` or `ephemeral` behavior; keep-alive servers survive idle sweeps, ephemeral servers are torn down immediately
-- **Schema caching** — tool schemas are persisted to `~/.metamcp/cache/` for faster cold starts; stale caches are refreshed transparently on reconnect
-- **Config import** — `--import` discovers MCP server configs from Cursor, Claude Desktop, Claude Code, VS Code, Windsurf, Codex, and OpenCode
-- **LIFO eviction** — when the pool is full, the oldest idle connection is evicted first
-- **V8 sandbox** — `mcp_execute` runs in a locked-down `vm.Context` with frozen prototypes, no `eval`, no `require`, no network access
-- **Multi-transport** — stdio for local servers, Streamable HTTP and SSE for remote servers, with OAuth support
-- **Trust policy** — registry packages are evaluated before auto-provisioning
+Full docs at [metamcp.org](https://metamcp.org).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, commit conventions, and PR guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Links
 
 - [Documentation](https://metamcp.org)
-- [npm package](https://www.npmjs.com/package/@mentu/metamcp)
+- [npm](https://www.npmjs.com/package/@mentu/metamcp)
 - [GitHub](https://github.com/mentu-ai/metamcp)
 
 ## License
