@@ -1,6 +1,6 @@
 {
   "name": "@mentu/metamcp",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "A meta-MCP server that collapses N child MCP servers into 4 tools. Intent routing, lazy spawning, connection pooling, semantic search, and sandboxed code execution.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
