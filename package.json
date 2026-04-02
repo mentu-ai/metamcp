@@ -3,20 +3,23 @@
   "version": "0.2.0",
   "description": "A meta-MCP server that collapses N child MCP servers into 4 tools. Intent routing, lazy spawning, connection pooling, semantic search, and sandboxed code execution.",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "type": "module",
   "bin": {
-    "metamcp": "dist/index.js",
-    "metamcp-init": "dist/init.js"
+    "metamcp": "dist/index.js"
   },
   "files": [
     "dist",
+    "!dist/__tests__",
+    "!dist/**/*.js.map",
+    "!dist/**/*.d.ts.map",
     "README.md"
   ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mentu-ai/metamcp.git"
   },
-  "homepage": "https://github.com/mentu-ai/metamcp#readme",
+  "homepage": "https://metamcp.org",
   "bugs": {
     "url": "https://github.com/mentu-ai/metamcp/issues"
   },
@@ -24,10 +27,11 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc && node --eval \"const fs=require('fs');for(const f of['dist/index.js','dist/init.js']){try{fs.writeFileSync(f,'#!/usr/bin/env node\\n'+fs.readFileSync(f,'utf8'))}catch{}}\"",
+    "build": "tsc && node --eval \"const fs=require('fs');for(const f of['dist/index.js','dist/init.js']){try{const c=fs.readFileSync(f,'utf8');if(!c.startsWith('#!'))fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c);fs.chmodSync(f,0o755)}catch{}}\"",
     "start": "node dist/index.js",
     "test": "npm run build && node dist/__tests__/sandbox.test.js && node dist/__tests__/child-manager.test.js && node dist/__tests__/store.test.js && node dist/__tests__/bpe-tokenizer.test.js && node dist/__tests__/evidence.test.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "mcp",
@@ -45,7 +49,9 @@
   "author": "Mentu AI (https://github.com/mentu-ai)",
   "license": "Apache-2.0",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@modelcontextprotocol/sdk": "^1.27.1"
+  },
+  "optionalDependencies": {
     "better-sqlite3": "^12.6.2"
   },
   "devDependencies": {

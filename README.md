@@ -22,12 +22,24 @@ LLM ──► MetaMCP ────────┼─── fetch (3 tools)
 
 Your LLM sees 4 tools. MetaMCP handles discovery, routing, connection lifecycle, and sandboxed execution across all child servers.
 
+## Documentation
+
+Full documentation at [metamcp.org](https://metamcp.org).
+
 ## Installation
 
 ```bash
-npx metamcp              # run directly
+npx metamcp              # run directly (no install)
 npm install -g metamcp    # or install globally
 ```
+
+**Auto-configure your MCP client** (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, and more):
+
+```bash
+npx metamcp init
+```
+
+> **Note:** MetaMCP optionally uses `better-sqlite3` for semantic search (vector embeddings). This requires a C++ compiler for native compilation. If compilation fails, MetaMCP still works fully with keyword-only search. On macOS, run `xcode-select --install` if you see build errors. On Linux, install `build-essential`.
 
 ## Quick Start
 
@@ -183,6 +195,12 @@ MetaMCP manages child server lifecycles with:
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, commit conventions, and PR guidelines.
+
+## Links
+
+- [Documentation](https://metamcp.org)
+- [npm package](https://www.npmjs.com/package/metamcp)
+- [GitHub](https://github.com/mentu-ai/metamcp)
 
 ## License
 
