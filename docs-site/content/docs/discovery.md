@@ -97,14 +97,16 @@ When `mcp_provision` cannot find a matching capability among local servers, it s
 
 **Cache TTL:** 24 hours. Registry results are cached locally to avoid repeated network calls.
 
-**Fallback list:** If the registry is unreachable, MetaMCP includes a built-in list of well-known servers:
+**Fallback list:** If the registry is unreachable, MetaMCP includes a built-in list of 20 well-known servers from 7 organizations:
 
-- `@modelcontextprotocol/server-filesystem`
-- `@modelcontextprotocol/server-github`
-- `@modelcontextprotocol/server-sqlite`
-- `@playwright/mcp`
-- `@stripe/mcp`
-- `@sentry/mcp-server`
+| Namespace | Servers |
+|-----------|---------|
+| `@modelcontextprotocol` | filesystem, github, gitlab, google-maps, memory, postgres, slack, sqlite, brave-search, puppeteer, fetch, everything |
+| `@anthropic` | sequential-thinking |
+| `@playwright` | mcp |
+| `@stripe` | mcp |
+| `@sentry` | mcp-server |
+| Community | mcp-server-docker, mcp-server-kubernetes, mcp-server-git, mcp-server-linear |
 
 Registry search is only triggered by `mcp_provision`, not by `mcp_discover`. Discovery searches local catalogs only.
 

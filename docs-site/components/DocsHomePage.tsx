@@ -71,7 +71,7 @@ const products = [
   {
     title: "V8 Sandbox",
     description:
-      "Isolated code execution with 16 security protections. Compose across servers in one call.",
+      "Isolated code execution with 15 security protections. Compose across servers in one call.",
     href: "/concepts/sandbox",
     gradient: [
       "radial-gradient(ellipse at 30% 20%, rgba(251,191,36,0.7), transparent 55%)",

@@ -15,28 +15,21 @@ The pool manages the full lifecycle: spawning on first use, tracking idle connec
 
 ## Pool Configuration
 
-Configure the pool through `metamcp.config.json` under the `pool` key, or via CLI flags.
+Pool settings are configured via CLI flags when starting MetaMCP. There is no config file key for pool settings.
 
-| Field | Type | Default | CLI Flag | Description |
-|-------|------|---------|----------|-------------|
-| `poolSize` | number | 20 | `--pool-size` | Max concurrent child connections |
-| `resPoolSize` | number | 0 | `--res-pool-size` | Reserve slots above poolSize |
-| `minPoolSize` | number | 0 | `--min-pool-size` | Minimum connections to keep alive |
-| `resPoolTimeout` | number | 5000 | `--res-pool-timeout` | Milliseconds before reserve activates |
-| `idleTimeoutMs` | number | 300000 | `--idle-timeout` | Idle connection timeout (ms) |
-| `failureThreshold` | number | 5 | `--failure-threshold` | Circuit breaker trips after N failures |
-| `cooldownMs` | number | 30000 | `--cooldown` | Circuit breaker cooldown (ms) |
+| Setting | Default | CLI Flag | Description |
+|---------|---------|----------|-------------|
+| Max connections | 20 | `--max-connections` | Max concurrent child connections |
+| Idle timeout | 300000 | `--idle-timeout` | Idle connection timeout (ms) |
+| Failure threshold | 5 | `--failure-threshold` | Circuit breaker trips after N failures |
+| Cooldown | 30000 | `--cooldown` | Circuit breaker cooldown (ms) |
 
-**Example configuration:**
+The internal pool also tracks `resPoolSize` (reserve slots, default 0), `minPoolSize` (minimum connections, default 0), and `resPoolTimeout` (reserve activation delay, default 5000ms). These are not currently exposed as CLI flags.
 
-```json
-{
-  "pool": {
-    "poolSize": 30,
-    "minPoolSize": 3,
-    "idleTimeoutMs": 600000
-  }
-}
+**Example:**
+
+```bash
+metamcp --config .mcp.json --max-connections 30 --idle-timeout 600000
 ```
 
 ## Lazy Spawning

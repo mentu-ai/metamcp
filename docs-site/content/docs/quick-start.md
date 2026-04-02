@@ -63,7 +63,7 @@ To configure manually, open Claude Desktop's config file and add MetaMCP as a se
 
 > **Warning:** Use an absolute path for the `--config` value. Claude Desktop does not resolve relative paths from your project directory.
 
-Restart Claude Desktop after updating the config. For detailed setup, see [Claude Desktop Integration](/integrations/claude-desktop).
+Restart Claude Desktop after updating the config. For detailed setup, see [Claude Desktop Setup](/guides/claude-desktop).
 
 ## Connect to Claude Code
 
@@ -86,7 +86,7 @@ Or add it manually to your project's `.mcp.json` or `~/.claude/settings.json`:
 }
 ```
 
-For detailed setup, see [Claude Code Integration](/integrations/claude-code).
+For detailed setup, see [Claude Code Setup](/guides/claude-code).
 
 ## Your first discovery
 
