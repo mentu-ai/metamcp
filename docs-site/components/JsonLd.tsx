@@ -1,4 +1,4 @@
-import { getPathForSlug, getGroupForSlug } from "@/lib/docs-nav";
+import { getPathForSlug, getGroupForSlug, getFirstPathInGroup } from "@/lib/docs-nav";
 
 interface JsonLdProps {
   slug: string;
@@ -21,17 +21,19 @@ function buildBreadcrumbSchema(slug: string, title: string) {
 
   const group = getGroupForSlug(slug);
   if (group) {
+    const groupPath = getFirstPathInGroup(slug);
+    const pagePath = getPathForSlug(slug);
     items.push({
       "@type": "ListItem",
       position: 2,
       name: group,
-      item: `https://metamcp.org${getPathForSlug(slug)}`,
+      item: `https://metamcp.org${groupPath}`,
     });
     items.push({
       "@type": "ListItem",
       position: 3,
       name: title,
-      item: `https://metamcp.org${getPathForSlug(slug)}`,
+      item: `https://metamcp.org${pagePath}`,
     });
   } else {
     items.push({
@@ -79,36 +81,12 @@ function buildTechArticleSchema(title: string, description: string, slug: string
   };
 }
 
-function buildFAQSchema(headings: { depth: number; text: string; id: string }[]) {
-  // Extract h2 headings as question groups, h3 headings as individual questions
-  const questions = headings
-    .filter((h) => h.depth === 3)
-    .map((h) => ({
-      "@type": "Question" as const,
-      name: h.text,
-      acceptedAnswer: {
-        "@type": "Answer" as const,
-        text: `See the ${h.text} section in our troubleshooting guide for detailed steps.`,
-      },
-    }));
-
-  if (questions.length === 0) return null;
-
-  return {
-    "@context": "https://schema.org",
-    "@type": "FAQPage",
-    mainEntity: questions,
-  };
-}
-
 // Slugs that get SoftwareApplication schema
 const SOFTWARE_SLUGS = new Set(["install", "what-is-metamcp"]);
 // Slugs that get TechArticle schema
 const TECH_ARTICLE_SLUGS = new Set(["architecture", "tool-reference", "the-four-tools", "sandbox", "cli-reference"]);
-// Slug that gets FAQ schema
-const FAQ_SLUG = "troubleshooting";
 
-export default function JsonLd({ slug, title, description, headings }: JsonLdProps) {
+export default function JsonLd({ slug, title, description }: JsonLdProps) {
   const schemas: object[] = [];
 
   // Every page gets breadcrumbs
@@ -122,12 +100,6 @@ export default function JsonLd({ slug, title, description, headings }: JsonLdPro
   // TechArticle on reference/architecture pages
   if (TECH_ARTICLE_SLUGS.has(slug)) {
     schemas.push(buildTechArticleSchema(title, description, slug));
-  }
-
-  // FAQPage on troubleshooting
-  if (slug === FAQ_SLUG && headings) {
-    const faq = buildFAQSchema(headings);
-    if (faq) schemas.push(faq);
   }
 
   return (

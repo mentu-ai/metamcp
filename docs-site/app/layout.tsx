@@ -34,9 +34,39 @@ export const metadata: Metadata = {
     url: "https://metamcp.org",
     siteName: "MetaMCP Docs",
     type: "website",
+    images: [
+      {
+        url: "https://metamcp.org/opengraph-image.png",
+        width: 1200,
+        height: 630,
+        alt: "MetaMCP - OS for MCP servers",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "MetaMCP Docs",
+    description:
+      "Documentation for MetaMCP, the meta-MCP server that collapses N child servers into 4 tools.",
+    images: ["https://metamcp.org/twitter-image.png"],
   },
   icons: {
-    icon: "/favicon.ico",
+    icon: [
+      { url: "/favicon.ico", sizes: "32x32" },
+      { url: "/icon.svg", type: "image/svg+xml" },
+    ],
+    apple: "/apple-icon.png",
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-snippet": -1,
+      "max-image-preview": "large" as const,
+      "max-video-preview": -1,
+    },
   },
 };
 

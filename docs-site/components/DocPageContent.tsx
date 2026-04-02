@@ -38,7 +38,6 @@ export default function DocPageContent({
         slug={doc.slug}
         title={doc.title}
         description={doc.description || doc.excerpt}
-        headings={doc.headings}
       />
       <SearchModal entries={searchEntries} />
       <div className="flex min-h-[calc(100vh-3.5rem)]">

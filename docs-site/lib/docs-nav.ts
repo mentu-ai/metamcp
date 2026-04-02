@@ -226,3 +226,17 @@ export function getNavGroupForSlug(slug: string): NavGroup | null {
   }
   return null;
 }
+
+/** Get the path of the first page in the same group as the given slug */
+export function getFirstPathInGroup(slug: string): string {
+  for (const group of navigation) {
+    for (const section of group.sections) {
+      if (section.links.some((l) => l.slug === slug)) {
+        const first = section.links[0];
+        if (!first) return "/";
+        return getPathForSlug(first.slug);
+      }
+    }
+  }
+  return "/";
+}

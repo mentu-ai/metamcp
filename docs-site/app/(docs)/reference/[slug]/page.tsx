@@ -33,11 +33,20 @@ export async function generateMetadata({
       url,
       siteName: "MetaMCP Docs",
       type: "article",
+      images: [
+        {
+          url: "https://metamcp.org/opengraph-image.png",
+          width: 1200,
+          height: 630,
+          alt: "MetaMCP - OS for MCP servers",
+        },
+      ],
     },
     twitter: {
-      card: "summary",
+      card: "summary_large_image",
       title: `${doc.title} - MetaMCP Docs`,
       description: doc.description || doc.excerpt,
+      images: ["https://metamcp.org/twitter-image.png"],
     },
     alternates: {
       canonical: url,
