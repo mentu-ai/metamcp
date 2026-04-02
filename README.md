@@ -169,6 +169,37 @@ MetaMCP reads `.mcp.json` — the same format used by Claude Desktop and Claude 
 }
 ```
 
+**Remote server (SSE):**
+
+```json
+{
+  "mcpServers": {
+    "remote-tools": {
+      "url": "https://mcp.example.com/sse",
+      "transportType": "sse",
+      "headers": {
+        "Authorization": "Bearer your-token"
+      }
+    }
+  }
+}
+```
+
+**Remote server (Streamable HTTP) with OAuth:**
+
+```json
+{
+  "mcpServers": {
+    "cloud-server": {
+      "url": "https://mcp.example.com/api",
+      "oauth": true
+    }
+  }
+}
+```
+
+MetaMCP supports three transport types: `stdio` (local process, default), `http` (Streamable HTTP), and `sse` (Server-Sent Events). Servers with a `url` field use HTTP by default. Set `transportType` to `sse` for SSE servers. OAuth triggers a browser-based authorization flow on first connect, with tokens persisted at `~/.metamcp/oauth/`.
+
 ## CLI Options
 
 | Flag | Default | Description |
@@ -190,6 +221,7 @@ MetaMCP manages child server lifecycles with:
 - **Circuit breaker** — per-server failure tracking with automatic cooldown
 - **LIFO eviction** — when the pool is full, the oldest idle connection is evicted first
 - **V8 sandbox** — `mcp_execute` runs in a locked-down `vm.Context` with frozen prototypes, no `eval`, no `require`, no network access
+- **Multi-transport** — stdio for local servers, Streamable HTTP and SSE for remote servers, with OAuth support
 - **Trust policy** — registry packages are evaluated before auto-provisioning
 
 ## Contributing

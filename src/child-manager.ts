@@ -202,6 +202,13 @@ export class ChildManager extends EventEmitter {
 
     if (child.state === ConnectionState.CLOSED) return;
 
+    // Remote servers (HTTP/SSE): just disconnect, no PID-based shutdown
+    if (child.client.isRemote) {
+      await child.client.disconnect();
+      this.setState(child, ConnectionState.CLOSED);
+      return;
+    }
+
     const pid = child.client.pid;
 
     // Step 1: Close stdin

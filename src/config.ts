@@ -1,12 +1,17 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { ServerConfig } from './types.js';
+import type { ServerConfig, TransportType } from './types.js';
 import { log } from './log.js';
 
 interface McpJsonEntry {
-  command: string;
+  command?: string;
   args?: string[];
   env?: Record<string, string>;
+  url?: string;
+  transportType?: string;
+  headers?: Record<string, string>;
+  oauth?: boolean;
+  timeoutMs?: number;
 }
 
 interface McpJsonFile {
@@ -37,11 +42,33 @@ export function loadConfig(configPath?: string): ServerConfig[] {
   const servers = parsed.mcpServers;
   if (!servers) return [];
 
-  return Object.entries(servers).map(([name, entry]) => ({
-    name,
-    command: entry.command,
-    args: entry.args,
-    env: entry.env,
-    criticality: 'vital' as const,
-  }));
+  const result: ServerConfig[] = [];
+
+  for (const [name, entry] of Object.entries(servers)) {
+    if (!entry.command && !entry.url) {
+      log('warn', 'server entry missing both command and url, skipping', { name });
+      continue;
+    }
+
+    const config: ServerConfig = {
+      name,
+      command: entry.command ?? '',
+      criticality: 'vital',
+    };
+
+    if (entry.args) config.args = entry.args;
+    if (entry.env) config.env = entry.env;
+    if (entry.url) {
+      config.url = entry.url;
+      const t = entry.transportType?.toLowerCase();
+      config.transport = t === 'sse' ? 'sse' : 'http';
+    }
+    if (entry.headers) config.headers = entry.headers;
+    if (entry.oauth) config.oauth = entry.oauth;
+    if (entry.timeoutMs) config.timeoutMs = entry.timeoutMs;
+
+    result.push(config);
+  }
+
+  return result;
 }

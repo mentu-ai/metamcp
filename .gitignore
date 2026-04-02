@@ -16,5 +16,11 @@ node_modules/
 # MetaMCP data directory
 .metamcp/
 
+# Mentu build artifacts
+.mentu/
+
+# Internal docs
+docs/
+
 # Docs site (deployed separately)
 docs-site/

@@ -1,7 +1,0 @@
-{
-  "type": "lifecycle",
-  "kind": "cwd_changed",
-  "source": "hook:CwdChanged",
-  "detail": "cwd: /Users/rashid/Desktop/metamcp-open-source/.worktrees/metamcp-docs -> /Users/rashid/Desktop/metamcp-open-source/docs-site",
-  "timestamp": "2026-04-02T01:18:21Z"
-}

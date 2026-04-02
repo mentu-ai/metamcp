@@ -26,11 +26,18 @@ export function canTransition(from: ConnectionState, to: ConnectionState): boole
 
 export type ServiceCriticality = 'vital' | 'optional';
 
+export type TransportType = 'stdio' | 'http' | 'sse';
+
 export interface ServerConfig {
   name: string;
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  url?: string;
+  transport?: TransportType;
+  headers?: Record<string, string>;
+  oauth?: boolean;
+  timeoutMs?: number;
   criticality: ServiceCriticality;
 }
 
