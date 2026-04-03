@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { readFileSync, watch, existsSync, writeFileSync } from 'node:fs';
+import { resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -18,6 +18,7 @@ import { recordLedger } from './ledger.js';
 import { VectorStore } from './vector-store.js';
 import { Embedder } from './embedder.js';
 import type { ServerConfig } from './types.js';
+import { SkillCatalog } from './skill-catalog.js';
 
 // --- CLI argument parsing ---
 
@@ -45,11 +46,18 @@ function printHelp(): void {
 
 Usage: metamcp [options]
        metamcp init [--yes] [--json]
+       metamcp add <server> [<server>...] [--config <path>]
+       metamcp add --list [--category <name>] [--json]
 
 Commands:
   init                       Auto-configure MetaMCP in all supported MCP clients
     --yes                    Non-interactive mode (skip confirmation prompts)
     --json                   Output structured JSON result
+  add <server>               Add server(s) from the gallery to .mcp.json
+    --list, -l               List all available servers
+    --category <name>        Filter by category
+    --config <path>          Target config file (default: .mcp.json)
+    --json                   Output structured JSON
 
 Options:
   --config <path>            Path to .mcp.json (default: .mcp.json)
@@ -122,6 +130,13 @@ if (process.argv[2] === 'init') {
   process.exit(0);
 }
 
+// --- Subcommand: add ---
+if (process.argv[2] === 'add') {
+  const { runGalleryAdd } = await import('./gallery.js');
+  await runGalleryAdd(process.argv.slice(3));
+  process.exit(0);
+}
+
 const cliOptions = parseArgs(process.argv);
 
 let vectorStore: VectorStore | undefined;
@@ -152,6 +167,7 @@ const childManager = new ChildManager(
 );
 const intentRouter = new IntentRouter();
 const trustPolicy = new TrustPolicy();
+const skillCatalog = new SkillCatalog();
 let serverConfigs: ServerConfig[] = [];
 
 
@@ -206,6 +222,29 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ['code'],
         },
       },
+      {
+        name: 'mcp_skill_discover',
+        description: 'Search Claude Code skills with MCP readiness status. Returns skills matching query with their required MCP servers and availability.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            query: { type: 'string', description: 'Search query for skills' },
+            domain: { type: 'string', description: 'Filter by domain (e.g. browser_automation, monitoring)' },
+          },
+          required: ['query'],
+        },
+      },
+      {
+        name: 'mcp_skill_advise',
+        description: 'Pre-flight readiness check for a skill. Returns MCP server availability and recommendations.',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            skill: { type: 'string', description: 'Skill name to check' },
+          },
+          required: ['skill'],
+        },
+      },
     ],
   };
 });
@@ -222,6 +261,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return handleCall(args);
     case 'mcp_execute':
       return handleExecute(args);
+    case 'mcp_skill_discover':
+      return handleSkillDiscover(args);
+    case 'mcp_skill_advise':
+      return handleSkillAdvise(args);
     default:
       return {
         content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }],
@@ -470,6 +513,91 @@ async function handleExecute(args?: Record<string, unknown>) {
   }
 }
 
+function serverChecker(serverName: string): { available: boolean; state: string } {
+  if (childManager.hasServer(serverName)) {
+    return { available: true, state: 'connected' };
+  }
+  const configured = serverConfigs.some(c => c.name === serverName);
+  return {
+    available: false,
+    state: configured ? 'configured_not_spawned' : 'not_configured',
+  };
+}
+
+async function handleSkillDiscover(args?: Record<string, unknown>) {
+  const query = args?.query as string;
+  const domain = args?.domain as string | undefined;
+
+  if (!query) {
+    // List all skills with readiness
+    const all = skillCatalog.all().map(s => {
+      const advice = skillCatalog.advise(s.name, serverChecker);
+      return {
+        skill: s.name,
+        description: s.description,
+        domain: s.domain,
+        archetype: s.archetype,
+        requiresMcp: s.requiresMcp,
+        mcpReady: advice?.ready ?? false,
+        source: s.source,
+      };
+    });
+    return {
+      content: [{ type: 'text' as const, text: JSON.stringify(all, null, 2) }],
+    };
+  }
+
+  const matches = skillCatalog.search(query, domain, serverChecker);
+  return {
+    content: [{ type: 'text' as const, text: JSON.stringify(matches.map(m => ({
+      skill: m.name,
+      description: m.description,
+      domain: m.domain,
+      archetype: m.archetype,
+      score: m.score,
+      mcpReady: m.mcpReady,
+      requiresMcp: m.requiresMcp,
+      mcpStatus: m.mcpStatus,
+      source: m.source,
+    })), null, 2) }],
+  };
+}
+
+async function handleSkillAdvise(args?: Record<string, unknown>) {
+  const skillName = args?.skill as string;
+  if (!skillName) {
+    return {
+      content: [{ type: 'text' as const, text: 'Missing required parameter: skill' }],
+      isError: true,
+    };
+  }
+
+  const advice = skillCatalog.advise(skillName, serverChecker);
+  if (!advice) {
+    // Check if any gallery server matches — suggest installing
+    const { GALLERY } = await import('./gallery.js');
+    const galleryMatch = GALLERY.find(g =>
+      g.name.toLowerCase().includes(skillName.toLowerCase()) ||
+      skillName.toLowerCase().includes(g.name.toLowerCase().replace(/^@[^/]+\//, '').replace(/^(mcp-server-|server-)/, ''))
+    );
+
+    return {
+      content: [{ type: 'text' as const, text: JSON.stringify({
+        skill: skillName,
+        ready: false,
+        error: 'Skill not found',
+        suggestion: galleryMatch
+          ? `No skill "${skillName}" found, but there's an MCP server available: ${galleryMatch.name}. Install with: metamcp add ${skillName}`
+          : `No skill "${skillName}" found. Check ~/.claude/skills/ or .claude/skills/`,
+      }, null, 2) }],
+    };
+  }
+
+  return {
+    content: [{ type: 'text' as const, text: JSON.stringify(advice, null, 2) }],
+  };
+}
+
 async function ensureAllConnected(): Promise<void> {
   for (const config of serverConfigs) {
     if (!childManager.hasServer(config.name)) {
@@ -533,6 +661,68 @@ async function main() {
   await server.connect(transport);
 
   log('info', 'server started', { transport: 'stdio' });
+
+  // Hot-reload: watch .mcp.json for changes (e.g. from `metamcp add`)
+  // Uses dual strategy: watch file directly when it exists, poll as fallback.
+  const configPath = resolve(cliOptions.configPath ?? '.mcp.json');
+  let reloadDebounce: ReturnType<typeof setTimeout> | null = null;
+  let lastConfigMtime = 0;
+
+  function reloadConfig(): void {
+    try {
+      if (!existsSync(configPath)) return;
+      const fresh = loadConfig(cliOptions.configPath);
+      const existing = new Set(serverConfigs.map(s => s.name));
+      let added = 0;
+      for (const cfg of fresh) {
+        if (!existing.has(cfg.name)) {
+          serverConfigs.push(cfg);
+          added++;
+          log('info', 'hot-reload: new server available', { name: cfg.name });
+        }
+      }
+      if (added > 0) {
+        log('info', 'hot-reload complete', { added, total: serverConfigs.length });
+      }
+    } catch {
+      log('warn', 'hot-reload: failed to parse config');
+    }
+  }
+
+  function scheduleReload(): void {
+    if (reloadDebounce) clearTimeout(reloadDebounce);
+    reloadDebounce = setTimeout(reloadConfig, 300);
+  }
+
+  // Strategy 1: fs.watch on the file (best latency, but only works if file exists)
+  function watchFile(): void {
+    try {
+      if (!existsSync(configPath)) return;
+      const watcher = watch(configPath, () => scheduleReload());
+      // Re-create watcher if file is deleted and recreated
+      watcher.on('error', () => { watcher.close(); });
+      log('info', 'watching config for hot-reload', { path: configPath });
+    } catch { /* non-fatal */ }
+  }
+  watchFile();
+
+  // Strategy 2: lightweight poll every 2s to catch file creation and atomic renames
+  // Checks mtime only — no disk read unless changed.
+  const pollInterval = setInterval(() => {
+    try {
+      if (!existsSync(configPath)) {
+        if (lastConfigMtime !== 0) lastConfigMtime = 0; // file was deleted
+        return;
+      }
+      const { mtimeMs } = require('node:fs').statSync(configPath);
+      if (mtimeMs !== lastConfigMtime) {
+        if (lastConfigMtime === 0) watchFile(); // file just appeared — start watching
+        lastConfigMtime = mtimeMs;
+        scheduleReload();
+      }
+    } catch { /* non-fatal */ }
+  }, 2000);
+  pollInterval.unref(); // don't keep process alive
 
   let shuttingDown = false;
   async function gracefulShutdown() {
