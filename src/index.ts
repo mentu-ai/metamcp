@@ -19,6 +19,7 @@ import { VectorStore } from './vector-store.js';
 import { Embedder } from './embedder.js';
 import type { ServerConfig } from './types.js';
 import { SkillCatalog } from './skill-catalog.js';
+import { scrubSecrets } from './secret-scrubber.js';
 
 // --- CLI argument parsing ---
 
@@ -252,25 +253,39 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
-  switch (name) {
-    case 'mcp_discover':
-      return handleDiscover(args);
-    case 'mcp_provision':
-      return handleProvision(args);
-    case 'mcp_call':
-      return handleCall(args);
-    case 'mcp_execute':
-      return handleExecute(args);
-    case 'mcp_skill_discover':
-      return handleSkillDiscover(args);
-    case 'mcp_skill_advise':
-      return handleSkillAdvise(args);
-    default:
-      return {
-        content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }],
-        isError: true,
-      };
+  const result = await (async () => {
+    switch (name) {
+      case 'mcp_discover':
+        return handleDiscover(args);
+      case 'mcp_provision':
+        return handleProvision(args);
+      case 'mcp_call':
+        return handleCall(args);
+      case 'mcp_execute':
+        return handleExecute(args);
+      case 'mcp_skill_discover':
+        return handleSkillDiscover(args);
+      case 'mcp_skill_advise':
+        return handleSkillAdvise(args);
+      default:
+        return {
+          content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }],
+          isError: true,
+        };
+    }
+  })();
+
+  // Scrub known secret patterns from any text content before it leaves the process.
+  // This is the chokepoint — every tool response passes through here.
+  if (result && Array.isArray((result as { content?: unknown[] }).content)) {
+    const r = result as { content: Array<{ type: string; text?: string } & Record<string, unknown>> };
+    r.content = r.content.map(c =>
+      c.type === 'text' && typeof c.text === 'string'
+        ? { ...c, text: scrubSecrets(c.text) }
+        : c
+    );
   }
+  return result;
 });
 
 async function handleDiscover(args?: Record<string, unknown>) {

@@ -2,6 +2,10 @@
 dist/
 node_modules/
 
+# Recordings / capture artifacts (never commit)
+*.mp4
+*.cast
+
 # MCP config (contains local paths / secrets — copy from .mcp.example.json)
 .mcp.json
 

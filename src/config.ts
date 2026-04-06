@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { ServerConfig, ServerLifecycle, TransportType } from './types.js';
 import { log } from './log.js';
+import { resolveSecrets } from './vault-resolver.js';
 
 interface McpJsonEntry {
   command?: string;
@@ -58,13 +59,14 @@ export function loadConfig(configPath?: string): ServerConfig[] {
     };
 
     if (entry.args) config.args = entry.args;
-    if (entry.env) config.env = entry.env;
+    // Expand ${KEY} references through the vault chain (mentu vault → process.env → literal).
+    if (entry.env) config.env = resolveSecrets(entry.env);
     if (entry.url) {
       config.url = entry.url;
       const t = entry.transportType?.toLowerCase();
       config.transport = t === 'sse' ? 'sse' : 'http';
     }
-    if (entry.headers) config.headers = entry.headers;
+    if (entry.headers) config.headers = resolveSecrets(entry.headers);
     if (entry.oauth) config.oauth = entry.oauth;
     if (entry.timeoutMs) config.timeoutMs = entry.timeoutMs;
     if (entry.lifecycle) config.lifecycle = parseLifecycle(entry.lifecycle);

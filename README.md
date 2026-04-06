@@ -226,6 +226,41 @@ Three transport types: `stdio` (local, default), `http` (Streamable HTTP), and `
 
 Lifecycle controls idle behavior: `keep-alive` servers persist, `ephemeral` servers tear down immediately after use, and servers without a declaration follow the default pool timeout.
 
+### Secret resolution from the vault
+
+Hard-coding `API_KEY` strings in `.mcp.json` is the easiest way to leak credentials into git. MetaMCP supports `${KEY}` references in any `env` or `headers` value and resolves them at config load time:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" }
+    },
+    "remote-tools": {
+      "url": "https://mcp.example.com/sse",
+      "transportType": "sse",
+      "headers": { "Authorization": "Bearer ${REMOTE_TOOLS_TOKEN}" }
+    }
+  }
+}
+```
+
+Resolution order for each `${KEY}`:
+
+1. **`mentu vault`** — if [mentu-vault](https://github.com/mentu-ai/mentu-vault) is installed at `~/.local/bin/mentu-vault`, MetaMCP looks up the key in the macOS Keychain (or the age-encrypted file fallback). Workspace-scoped lookup is tried first when `MENTU_WORKSPACE` is set, then global.
+2. **`process.env`** — standard environment variable.
+3. **Literal** — if neither resolves, MetaMCP logs a warning and leaves the `${KEY}` reference in place so misconfiguration is visible instead of silent.
+
+Vault lookups are cached for the process lifetime, so resolution happens once at startup with no per-connection overhead. Inline references like `"Bearer ${TOKEN}"` and standalone `"${TOKEN}"` are both supported.
+
+If you do not use `mentu vault`, MetaMCP falls back to `process.env` automatically — no extra config needed. Just `export GITHUB_TOKEN=...` and the same `.mcp.json` works.
+
+### Secret scrubbing on the way out
+
+MetaMCP also runs an output scrubber on every tool response before it returns to the LLM. JWTs, OpenAI/GitHub/Slack/AWS tokens, and JSON-shaped credential keys (`password`, `secret`, `api_key`, `access_token`, `private_key`, `authorization`, etc.) are replaced with `[REDACTED:LABEL]`. This is best-effort defense in depth — secrets that match well-known patterns get caught even if a misconfigured downstream server echoes them in an error message.
+
 ## What MetaMCP handles for you
 
 - **Connection pool** -- bounded pool with LIFO idle eviction. Servers start lazily on first use.
