@@ -231,15 +231,15 @@ async function runTests(): Promise<void> {
       defaultTtlMs: 40,
     });
     store.startCleanup(15);
-    const tools1 = await store.get('server-a');
-    assertEqual(tools1[0], 'server-a-tool-v1', 'first load version');
-    const tools2 = await store.get('server-a');
-    assertEqual(tools2[0], 'server-a-tool-v1', 'cache hit same version');
+    const tools1 = await store.get('crawlio');
+    assertEqual(tools1[0], 'crawlio-tool-v1', 'first load version');
+    const tools2 = await store.get('crawlio');
+    assertEqual(tools2[0], 'crawlio-tool-v1', 'cache hit same version');
     assertEqual(loadVersion, 1, 'loader called once');
     await delay(100);
-    assertEqual(store.has('server-a'), false, 'evicted after TTL');
-    const tools3 = await store.get('server-a');
-    assertEqual(tools3[0], 'server-a-tool-v2', 'refreshed version');
+    assertEqual(store.has('crawlio'), false, 'evicted after TTL');
+    const tools3 = await store.get('crawlio');
+    assertEqual(tools3[0], 'crawlio-tool-v2', 'refreshed version');
     assertEqual(loadVersion, 2, 'loader called twice');
     store.destroy();
   });

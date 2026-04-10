@@ -197,9 +197,7 @@ async function runTests(): Promise<void> {
   }
 }
 
-runTests().then(() => {
-  process.exit(0);
-}).catch(err => {
+runTests().catch(err => {
   console.error('Test runner error:', err);
   process.exit(1);
 });

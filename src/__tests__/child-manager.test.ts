@@ -12,7 +12,11 @@
  */
 
 import { ConnectionState, canTransition } from '../types.js';
+import type { ServerConfig } from '../types.js';
+import { MCPConnectionFSM } from '../connection-fsm.js';
 import { CircuitBreaker } from '../circuit-breaker.js';
+import { ChildManager } from '../child-manager.js';
+import type { ManagedChild } from '../child-manager.js';
 
 // ─── Test Runner ─────────────────────────────────────────────────────────────
 
@@ -191,6 +195,103 @@ test('FAILED can only go to CONNECTING or CLOSED', () => {
   assertEqual(canTransition(ConnectionState.FAILED, ConnectionState.CLOSED), true, 'FAILED → CLOSED');
   assertEqual(canTransition(ConnectionState.FAILED, ConnectionState.ACTIVE), false, 'FAILED → ACTIVE');
   assertEqual(canTransition(ConnectionState.FAILED, ConnectionState.IDLE), false, 'FAILED → IDLE');
+});
+
+// ─── 4. LIFO Idle List ──────────────────────────────────────────────────────
+
+console.log('\nLIFO Idle List Tests\n');
+
+function makeFakeChild(name: string, state: ConnectionState = ConnectionState.IDLE): ManagedChild {
+  const config: ServerConfig = { name, command: 'echo', args: ['test'], criticality: 'vital' };
+  return {
+    config,
+    client: { pid: null, closeStdin: () => false, detach: () => {}, listTools: async () => [], callTool: async () => ({} as any), connect: async () => {}, disconnect: async () => {}, isConnected: false, config } as any,
+    fsm: new MCPConnectionFSM({ name }),
+    state,
+    restartCount: 0,
+    idleSince: 0,
+    circuitBreaker: new CircuitBreaker(5, 30000),
+  };
+}
+
+test('idle list has LIFO order — most recent at head', () => {
+  const cm = new ChildManager({ poolSize: 10, resPoolSize: 0, idleTimeoutMs: 300000, failureThreshold: 5, cooldownMs: 30000 });
+  cm._injectTestChild('a', makeFakeChild('a'));
+  cm._injectTestChild('b', makeFakeChild('b'));
+  cm._injectTestChild('c', makeFakeChild('c'));
+  const list = cm.getIdleList();
+  // c was injected last → head. a was injected first → tail.
+  assertEqual(list[0], 'c', 'head is most recent');
+  assertEqual(list[list.length - 1], 'a', 'tail is oldest');
+});
+
+test('eviction removes from tail (oldest idle first)', () => {
+  const cm = new ChildManager({ poolSize: 1, resPoolSize: 0, idleTimeoutMs: 300000, failureThreshold: 5, cooldownMs: 30000 });
+  cm._injectTestChild('a', makeFakeChild('a'));
+  cm._injectTestChild('b', makeFakeChild('b'));
+  // poolSize=1 with 2 children → enforce should evict 1
+  const result = cm.enforcePoolBounds();
+  assertEqual(result.evicted, 1, 'evicted 1 child');
+  // 'a' was oldest (tail) → should be evicted
+  assert(!cm.hasServer('a'), 'oldest idle (a) was evicted');
+  assert(cm.hasServer('b'), 'newest idle (b) remains');
+});
+
+test('re-inject after eviction places at head', () => {
+  const cm = new ChildManager({ poolSize: 10, resPoolSize: 0, idleTimeoutMs: 300000, failureThreshold: 5, cooldownMs: 30000 });
+  cm._injectTestChild('a', makeFakeChild('a'));
+  cm._injectTestChild('b', makeFakeChild('b'));
+  // Re-inject 'a' — should move to head
+  cm._injectTestChild('a', makeFakeChild('a'));
+  const list = cm.getIdleList();
+  assertEqual(list[0], 'a', 'a re-injected at head');
+});
+
+// ─── 5. Pool Bounds ─────────────────────────────────────────────────────────
+
+console.log('\nPool Bounds Tests\n');
+
+test('enforcePoolBounds evicts excess idle children', () => {
+  const cm = new ChildManager({ poolSize: 2, resPoolSize: 0, idleTimeoutMs: 300000, failureThreshold: 5, cooldownMs: 30000 });
+  cm._injectTestChild('a', makeFakeChild('a'));
+  cm._injectTestChild('b', makeFakeChild('b'));
+  cm._injectTestChild('c', makeFakeChild('c'));
+  cm._injectTestChild('d', makeFakeChild('d'));
+  // 4 children, pool upper bound = 2+0=2 → evict 2
+  const result = cm.enforcePoolBounds();
+  assertEqual(result.evicted, 2, 'evicted 2 children');
+  const status = cm.getPoolStatus();
+  assertEqual(status.activeCount, 2, '2 remain after eviction');
+});
+
+test('enforcePoolBounds no-op when within bounds', () => {
+  const cm = new ChildManager({ poolSize: 5, resPoolSize: 0, idleTimeoutMs: 300000, failureThreshold: 5, cooldownMs: 30000 });
+  cm._injectTestChild('a', makeFakeChild('a'));
+  cm._injectTestChild('b', makeFakeChild('b'));
+  const result = cm.enforcePoolBounds();
+  assertEqual(result.evicted, 0, 'no evictions needed');
+  assert(cm.hasServer('a'), 'a remains');
+  assert(cm.hasServer('b'), 'b remains');
+});
+
+test('belowMinimum detected when count < minPoolSize', () => {
+  const cm = new ChildManager({ poolSize: 10, resPoolSize: 0, minPoolSize: 3, idleTimeoutMs: 300000, failureThreshold: 5, cooldownMs: 30000 });
+  cm._injectTestChild('a', makeFakeChild('a'));
+  const status = cm.getPoolStatus();
+  assertEqual(status.belowMinimum, true, 'below minimum with 1 < 3');
+});
+
+test('getPoolStatus returns correct counts', () => {
+  const cm = new ChildManager({ poolSize: 5, resPoolSize: 2, minPoolSize: 1, idleTimeoutMs: 300000, failureThreshold: 5, cooldownMs: 30000 });
+  cm._injectTestChild('a', makeFakeChild('a'));
+  cm._injectTestChild('b', makeFakeChild('b'));
+  cm._injectTestChild('c', makeFakeChild('c', ConnectionState.ACTIVE));
+  const status = cm.getPoolStatus();
+  assertEqual(status.activeCount, 3, '3 active children');
+  assertEqual(status.idleCount, 2, '2 idle children (a, b)');
+  assertEqual(status.poolSize, 5, 'pool size');
+  assertEqual(status.upperBound, 7, 'upper bound = 5+2');
+  assertEqual(status.belowMinimum, false, '3 >= 1');
 });
 
 // ─── Results ─────────────────────────────────────────────────────────────────

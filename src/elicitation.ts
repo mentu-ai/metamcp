@@ -128,8 +128,6 @@ export class ElicitationHandler {
     });
 
     this.pending.delete(request.requestId);
-    // Dismiss with a visible log — not silent. The warn log above ensures
-    // the operator knows interactive mode is non-functional.
     return { requestId: request.requestId, action: 'dismiss' };
   }
 

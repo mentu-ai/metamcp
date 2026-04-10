@@ -1,8 +1,10 @@
 /**
- * Evidence Mode — structured investigation tracking.
+ * Evidence Mode — Layer 5 of the MCP Intelligence Architecture.
  *
  * Typed records with confidence scoring, gap tracking, and session scoping.
  * Sits on top of ledger.ts (telemetry) — this is structured evidence, not raw logs.
+ *
+ * Open source. No cortex.sock, no hardcoded ~/.mentu/ paths.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -217,7 +219,7 @@ export class InvestigationSession {
   }
 
   /**
-   * Extract labeled quality records from this session.
+   * Extract labeled training records for Recursive Mode (Layer 8).
    * Tool calls that succeeded and produced output → "high"
    * Tool calls that succeeded but produced empty output → "medium"
    * Tool calls that failed → "low"
@@ -249,17 +251,6 @@ export class InvestigationSession {
   }
 }
 
-// ─── VM Execution Evidence ──────────────────────────────────────────────────
-
-export interface VMExecutionEvidence {
-  jobId: string;
-  engine: string;
-  flowCount: number;
-  exitCode: number;
-  durationMs: number;
-  specPath?: string;
-}
-
 // ─── Session Manager ─────────────────────────────────────────────────────────
 
 export class EvidenceSessionManager {
@@ -268,7 +259,6 @@ export class EvidenceSessionManager {
   private readonly _maxCompleted: number;
   private _closeCount = 0;
   private _onClose: ((count: number) => void) | null = null;
-  private _vmExecutions: VMExecutionEvidence[] = [];
 
   constructor(maxCompleted = 50) {
     this._maxCompleted = maxCompleted;
@@ -321,25 +311,6 @@ export class EvidenceSessionManager {
     }
 
     return summary;
-  }
-
-  /**
-   * Record a VM execution outcome.
-   */
-  recordVMExecution(evidence: VMExecutionEvidence): void {
-    this._vmExecutions.push(evidence);
-
-    if (evidence.exitCode !== 0 && this._active) {
-      this._active.recordCall(
-        'vm-runtime', evidence.engine,
-        { jobId: evidence.jobId },
-        `VM engine exited with code ${evidence.exitCode}`,
-        evidence.durationMs,
-        false,
-        'vm_execute_engine',
-        [{ dimension: 'vm_execution', reason: `Engine ${evidence.engine} exited with code ${evidence.exitCode}`, impact: 'reducing' }],
-      );
-    }
   }
 
   /**

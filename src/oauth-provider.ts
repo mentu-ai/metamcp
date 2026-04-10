@@ -2,7 +2,7 @@
  * File-based OAuth client provider for MetaMCP.
  *
  * Implements the MCP SDK's OAuthClientProvider interface with persistent
- * token storage at ~/.metamcp/oauth/<server>/. The SDK handles the full
+ * token storage at ~/.mentu/oauth/<server>/. The SDK handles the full
  * OAuth 2.0 flow — this provider supplies storage and browser redirect.
  *
  * First run: opens browser for user consent, receives callback, stores tokens.
@@ -11,11 +11,12 @@
 
 import { createServer } from 'node:http';
 import { execSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, unlinkSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, unlinkSync, existsSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { OAuthClientMetadata, OAuthClientInformationMixed, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
+import { log } from './log.js';
 
 const CALLBACK_PORT = 19890;
 const CALLBACK_TIMEOUT_MS = 120_000;
@@ -25,7 +26,7 @@ export class FileOAuthProvider implements OAuthClientProvider {
   private callbackResolve: ((code: string) => void) | null = null;
 
   constructor(private readonly serverName: string) {
-    this.dir = join(homedir(), '.metamcp', 'oauth', serverName);
+    this.dir = join(homedir(), '.mentu', 'oauth', serverName);
     mkdirSync(this.dir, { recursive: true });
   }
 
@@ -35,7 +36,7 @@ export class FileOAuthProvider implements OAuthClientProvider {
 
   get clientMetadata(): OAuthClientMetadata {
     return {
-      client_name: 'metamcp',
+      client_name: 'MetaMCP',
       redirect_uris: [this.redirectUrl],
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
@@ -57,14 +58,17 @@ export class FileOAuthProvider implements OAuthClientProvider {
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
     this.writeJson('tokens.json', tokens);
+    log('info', 'oauth tokens saved', { server: this.serverName });
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
     const url = authorizationUrl.toString();
+    log('info', 'oauth authorization required', { server: this.serverName, url });
 
     try {
       execSync(`open "${url}"`, { stdio: 'ignore' });
     } catch {
+      // Fallback: log the URL for manual opening
       process.stderr.write(`\n[MetaMCP] Open this URL to authorize ${this.serverName}:\n  ${url}\n\n`);
     }
   }
@@ -93,6 +97,7 @@ export class FileOAuthProvider implements OAuthClientProvider {
       const path = join(this.dir, file);
       try { unlinkSync(path); } catch { /* already gone */ }
     }
+    log('info', 'oauth credentials invalidated', { server: this.serverName, scope });
   }
 
   /**
@@ -129,12 +134,15 @@ export class FileOAuthProvider implements OAuthClientProvider {
         }
       });
 
-      server.listen(CALLBACK_PORT, '127.0.0.1');
+      server.listen(CALLBACK_PORT, '127.0.0.1', () => {
+        log('info', 'oauth callback server started', { port: CALLBACK_PORT, server: this.serverName });
+      });
 
       server.on('error', (err) => {
         reject(new Error(`OAuth callback server error: ${err.message}`));
       });
 
+      // Timeout
       setTimeout(() => {
         if (this.callbackResolve) {
           this.callbackResolve = null;

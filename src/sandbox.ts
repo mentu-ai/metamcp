@@ -2,6 +2,7 @@ import vm from 'node:vm';
 import type { ChildManager } from './child-manager.js';
 import type { ToolCatalog } from './catalog.js';
 
+
 const MAX_CODE_SIZE = 50 * 1024; // 50KB
 const EXECUTION_TIMEOUT_MS = 120_000; // 120s
 const MAX_SLEEP_MS = 30_000; // 30s per sleep() call
@@ -66,7 +67,7 @@ export interface SandboxResult {
  * Pattern: Object.create(null) blocks __proto__ traversal.
  * Strict mode enforced by wrapping code in async IIFE with 'use strict'.
  *
- * Escape vector mitigations:
+ * Escape vector mitigations from CONTRACT-meta-sandbox.md §5:
  * - Function.prototype frozen → blocks constructor.constructor
  * - Object.prototype sealed → blocks prototype pollution
  * - Object.create(null) context → blocks __proto__ traversal
@@ -79,6 +80,7 @@ function buildContext(
   childManager: ChildManager,
   catalog: ToolCatalog,
   consoleLines: string[],
+  extraGlobals?: Record<string, unknown>,
 ): vm.Context {
   // Start with null-prototype object (blocks __proto__ traversal)
   const sandbox: Record<string, unknown> = Object.create(null);
@@ -158,6 +160,15 @@ function buildContext(
   // global, globalThis
   // These are simply not copied into the sandbox.
 
+  // Inject extra globals (e.g., mentu SDK for script-runner)
+  if (extraGlobals) {
+    for (const [name, value] of Object.entries(extraGlobals)) {
+      sandbox[name] = typeof value === 'object' && value !== null
+        ? Object.freeze(value)
+        : value;
+    }
+  }
+
   // Create the V8 context with code generation disabled
   // codeGeneration.strings: false → eval() and new Function() throw EvalError
   // codeGeneration.wasm: false → WebAssembly.compile() throws CompileError
@@ -195,6 +206,8 @@ export async function execute(
   code: string,
   childManager: ChildManager,
   catalog: ToolCatalog,
+  extraGlobals?: Record<string, unknown>,
+  timeoutMs?: number,
 ): Promise<SandboxResult> {
   // Step 1: Validate code size
   if (Buffer.byteLength(code, 'utf-8') > MAX_CODE_SIZE) {
@@ -206,7 +219,7 @@ export async function execute(
 
   // Step 3: Create sandboxed context
   const consoleLines: string[] = [];
-  const ctx = buildContext(childManager, catalog, consoleLines);
+  const ctx = buildContext(childManager, catalog, consoleLines, extraGlobals);
 
   // Step 4: Wrap in async IIFE with strict mode
   const wrapped = `'use strict'; (async () => { ${code} })()`;
@@ -219,15 +232,16 @@ export async function execute(
   // Step 6: Execute with timeout
   // vm.Script.runInContext timeout covers synchronous execution.
   // For async code, we race the promise against a timeout.
+  const effectiveTimeout = timeoutMs ?? EXECUTION_TIMEOUT_MS;
   let value: unknown;
   try {
-    const promise = script.runInContext(ctx, { timeout: EXECUTION_TIMEOUT_MS });
+    const promise = script.runInContext(ctx, { timeout: effectiveTimeout });
 
     // Race against timeout for the async portion
     value = await Promise.race([
       promise,
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Execution timeout')), EXECUTION_TIMEOUT_MS)
+        setTimeout(() => reject(new Error('Execution timeout')), effectiveTimeout)
       ),
     ]);
   } catch (err) {

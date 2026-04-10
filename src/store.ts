@@ -1,10 +1,15 @@
 /**
- * Generic Store with lazy loading, TTL-based eviction, and periodic cleanup.
+ * Generic Store+Cleanup — PiecesOS pattern adapted for TypeScript.
  *
  * Lifecycle: new → get(key) → lazy_load → cache → startCleanup → cleanup
  *
+ * Provenance:
+ *   EmbeddingStore: RwLock + Mutex + start_cleanup_task (Tokio)
+ *   TokenizerStore: get_tokenizer lazy load + cache + cleanup_old_tokenizers
+ *   Ollama Scheduler: expireRunner goroutine + TTL-based unload
+ *
  * JS is single-threaded — no locks needed. Async get() serializes loads
- * via the event loop. setInterval handles periodic cleanup.
+ * via the event loop. setInterval replaces Tokio::spawn for cleanup.
  */
 
 export interface CacheEntry<V> {

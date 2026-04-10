@@ -1,7 +1,7 @@
 /**
  * Disk-based tool schema cache for faster cold starts.
  *
- * Persists tool schemas to ~/.metamcp/cache/<server>/schema.json after
+ * Persists tool schemas to ~/.mentu/cache/<server>/schema.json after
  * first connect. On subsequent starts, the cached schema is loaded
  * immediately so the catalog is populated before the server finishes
  * connecting. The cache is overwritten whenever a fresh listTools()
@@ -14,7 +14,7 @@ import { homedir } from 'node:os';
 import type { ToolDefinition } from './types.js';
 import { log } from './log.js';
 
-const CACHE_DIR = join(homedir(), '.metamcp', 'cache');
+const CACHE_DIR = join(homedir(), '.mentu', 'cache');
 const SCHEMA_FILENAME = 'schema.json';
 
 export interface SchemaCacheSnapshot {

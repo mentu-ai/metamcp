@@ -43,7 +43,7 @@ export class MCPRegistry {
   async refresh(): Promise<void> {
     // Try API first
     try {
-      const response = await fetch(REGISTRY_URL);
+      const response = await fetch(REGISTRY_URL, { signal: AbortSignal.timeout(10_000) });
       if (response.ok) {
         const data = await response.json() as Array<{
           name?: string;
