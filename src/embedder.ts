@@ -3,9 +3,8 @@
  *
  * The VectorStore must not care where embeddings come from --
  * only that it receives a Float32Array. This abstraction exists
- * so we can swap the cloud Anthropic embedder for a local
- * MentuANE hardware embedder (Mentu Cortex, zero-latency,
- * zero-cost, air-gapped) when mentu-cortex is ready.
+ * so alternative embedding providers (local models, different APIs)
+ * can be swapped in without changing the catalog or vector store.
  */
 export interface EmbedderProvider {
   embedBatch(texts: string[]): Promise<Float32Array[]>;
@@ -24,10 +23,8 @@ interface VoyageEmbeddingResponse {
  * Uses the Voyage API (voyage-3-lite model) which is the embedding
  * model recommended for use with Anthropic/Claude workflows.
  *
- * Maps to PiecesOS EmbeddingStore pattern:
- * - EmbeddingStore::lookup_sources_batch (Rayon) -> batch API call
- * - RwLock for concurrent reads -> cache in SQLite (read anytime)
- * - Mutex for exclusive model access -> sequential API calls (rate limit safety)
+ * Batch embedding via Voyage API with rate-limit-safe sequential calls.
+ * Embeddings cached in SQLite for zero-cost repeated lookups.
  */
 export class AnthropicEmbedderProvider implements EmbedderProvider {
   readonly providerId = 'anthropic';
@@ -78,7 +75,7 @@ export class AnthropicEmbedderProvider implements EmbedderProvider {
 /**
  * Embedder facade -- delegates to the best available EmbedderProvider.
  *
- * Provider selection order: Local Cortex → Anthropic → error.
+ * Provider selection order: configured provider → Anthropic → error.
  * Pass an explicit provider to override auto-detection.
  */
 export class Embedder {

@@ -26,35 +26,25 @@ export function canTransition(from: ConnectionState, to: ConnectionState): boole
 
 export type ServiceCriticality = 'vital' | 'optional';
 
-export type ServerTransport = 'stdio' | 'http' | 'sse' | 'unix-http' | 'unix-jsonrpc' | 'mesh-tls';
-export type ServerAuth = 'none' | 'bearer' | 'oauth';
+export type TransportType = 'stdio' | 'http' | 'sse';
+
+export type ServerLifecycle =
+  | { mode: 'keep-alive'; idleTimeoutMs?: number }
+  | { mode: 'ephemeral' };
 
 export interface ServerConfig {
   name: string;
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  url?: string;
+  transport?: TransportType;
+  headers?: Record<string, string>;
+  oauth?: boolean;
+  timeoutMs?: number;
+  lifecycle?: ServerLifecycle;
   criticality: ServiceCriticality;
-  sandbox?: string;  // Path to .sandbox.json profile for VM isolation
-  transport?: ServerTransport;  // default: 'stdio'
-  url?: string;                 // Remote server URL (for http/sse transport)
-  headers?: Record<string, string>;  // Auth headers (for http/sse transport)
-  auth?: ServerAuth;            // Auth method: 'none' (default), 'bearer' (uses headers), 'oauth' (browser flow)
-  vmIsolation?: boolean;        // Run inside mentu-runtime VM via VsockTransport
-  socketPath?: string;          // Unix domain socket path (for unix-http/unix-jsonrpc transport)
-  timeoutMs?: number;           // Per-tool-call timeout in ms (default: 60000)
-  engine?: 'hybrid' | 'native' | 'bridge';  // Execution engine mode (default: hybrid)
 }
-
-/**
- * Maps pipeline phase names to server.tool pairs.
- *
- * Example: { "crawl": "crawlio.start_crawl", "decompile": "ghidra.decompile_function" }
- *
- * Used by mcp_provision to resolve pipeline intent strings
- * to concrete server + tool targets without catalog search.
- */
-export type IntentRouteMap = Record<string, string>;
 
 export interface ToolDefinition {
   name: string;

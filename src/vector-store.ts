@@ -6,12 +6,9 @@ import fs from 'node:fs';
 /**
  * SQLite-backed vector storage for tool embeddings.
  *
- * Architecture mirrors PiecesOS runtime_vector_search:
- * - sqlite_control_plane.rs -> better-sqlite3 Database
- * - archive_vectors table -> tool_embeddings table
- * - singleton_vector_db -> module-level VectorStore instance
- * - search_simd.rs -> pure TS cosine similarity (adequate at MetaMCP scale)
- * - Migration system -> version table with auto-migrate
+ * Stores Float32 embedding blobs alongside tool metadata.
+ * Brute-force cosine similarity search (adequate at MetaMCP scale).
+ * Schema versioning via version table with auto-migrate.
  */
 
 const CURRENT_SCHEMA_VERSION = 1;

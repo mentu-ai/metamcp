@@ -92,8 +92,6 @@ export class TrustPolicy {
     const defaults = [
       '@modelcontextprotocol/*',
       '@anthropic/*',
-      '@crawlio-app/*',
-      'crawlio-browser',
     ];
     try {
       mkdirSync(TRUST_DIR, { recursive: true });

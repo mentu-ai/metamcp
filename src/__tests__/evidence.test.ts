@@ -1,9 +1,9 @@
 /**
- * Evidence Mode Tests — Layer 5
+ * Evidence Mode Tests
  *
  * Hand-rolled runner (same pattern as store.test.ts).
  * Covers: Gap, ConfidenceCalculator, InvestigationSession,
- * EvidenceSessionManager, training record extraction.
+ * EvidenceSessionManager, quality record extraction.
  */
 
 import {
@@ -49,9 +49,9 @@ async function runTests(): Promise<void> {
 
   // ─── ConfidenceCalculator ────────────────────────────────────────────────
 
-  await test('1. ConfidenceCalculator: single source gets penalty', () => {
+  await test('1. ConfidenceCalculator: single source gets moderate floor', () => {
     const score = ConfidenceCalculator.compute(1, []);
-    assertEqual(score, 0.15, 'single source = 0.3 * 0.5');
+    assertEqual(score, 0.4, 'single source no gaps = 0.4 floor');
   });
 
   await test('2. ConfidenceCalculator: two sources no gaps', () => {
@@ -102,9 +102,9 @@ async function runTests(): Promise<void> {
 
   await test('9. ConfidenceCalculator.fromToolCall: success without output', () => {
     const score = ConfidenceCalculator.fromToolCall(true, 100, true, 0);
-    // sources=1 (success) + gap(empty_output reducing), single-source penalty
-    // 0.3 - 0.15 = 0.15, * 0.5 = 0.075 → rounds to 0.08
-    assertEqual(score, 0.08, 'success+empty = low confidence');
+    // sources=1 (success) + gap(empty_output reducing), softer single-source penalty
+    // 0.3 - 0.15 = 0.15, * 0.7 = 0.105 → rounds to 0.11
+    assertEqual(score, 0.11, 'success+empty = low confidence');
   });
 
   await test('10. ConfidenceCalculator.fromToolCall: failure', () => {
@@ -139,18 +139,18 @@ async function runTests(): Promise<void> {
 
   await test('14. Session: recordCall tracks servers and methods', () => {
     const session = new InvestigationSession('test', 'ev_test');
-    session.recordCall('crawlio', 'start_crawl', { url: 'https://example.com' },
-      'Started crawl job', 150, true, 'mcp_call');
-    session.recordCall('ghidra', 'decompile_function', { address: '0x1000' },
-      'Decompiled code', 200, true, 'mcp_call');
-    session.recordCall('crawlio', 'get_results', {},
+    session.recordCall('web-server', 'fetch_page', { url: 'https://example.com' },
+      'Page fetched', 150, true, 'mcp_call');
+    session.recordCall('analyzer', 'analyze_data', { id: 'item-1' },
+      'Analysis complete', 200, true, 'mcp_call');
+    session.recordCall('web-server', 'get_data', {},
       'Results ready', 50, true, 'mcp_execute');
 
     assertEqual(session.calls.length, 3, 'three calls');
     const servers = session.serversUsed.sort();
     assertEqual(servers.length, 2, 'two servers');
-    assertEqual(servers[0], 'crawlio', 'crawlio used');
-    assertEqual(servers[1], 'ghidra', 'ghidra used');
+    assertEqual(servers[0], 'analyzer', 'analyzer used');
+    assertEqual(servers[1], 'web-server', 'web-server used');
     const methods = session.methodsUsed.sort();
     assertEqual(methods.length, 2, 'two methods');
     assertEqual(methods[0], 'mcp_call', 'mcp_call used');
@@ -208,9 +208,9 @@ async function runTests(): Promise<void> {
   await test('19. Session: gaps passed to recordCall are preserved', () => {
     const session = new InvestigationSession('gaps test', 'ev_gaps');
     const customGaps = [
-      { dimension: 'server_unavailable', reason: 'Ghidra not running', impact: 'blocking' as const },
+      { dimension: 'server_unavailable', reason: 'Analyzer not running', impact: 'blocking' as const },
     ];
-    const ev = session.recordCall('ghidra', 'list_functions', {}, '', 0, false, 'mcp_call', customGaps);
+    const ev = session.recordCall('analyzer', 'list_items', {}, '', 0, false, 'mcp_call', customGaps);
     assert(ev.gaps.length >= 1, 'has gaps');
     assert(ev.gaps.some(g => g.dimension === 'server_unavailable'), 'custom gap preserved');
   });

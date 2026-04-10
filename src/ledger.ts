@@ -1,7 +1,7 @@
 /**
- * Mentu Ledger — async append-only JSONL logging.
+ * MetaMCP Ledger — async append-only JSONL logging.
  *
- * Every mcp_call and mcp_execute invocation is recorded to .mentu/ledger.jsonl.
+ * Every mcp_call and mcp_execute invocation is recorded to .metamcp/ledger.jsonl.
  * Non-blocking fire-and-forget writes — never blocks tool execution.
  */
 
@@ -11,7 +11,7 @@ import { log } from './log.js';
 
 export interface LedgerEntry {
   timestamp: string;
-  tool: 'mcp_call' | 'mcp_execute' | 'vm_execute_engine' | 'vm_bash' | 'spectre_deep_analyze';
+  tool: 'mcp_call' | 'mcp_execute';
   server: string | null;
   childTool?: string;
   duration_ms: number;
@@ -19,7 +19,7 @@ export interface LedgerEntry {
   error?: string;
 }
 
-const LEDGER_DIR = '.mentu';
+const LEDGER_DIR = '.metamcp';
 const LEDGER_FILE = join(LEDGER_DIR, 'ledger.jsonl');
 
 let dirEnsured = false;

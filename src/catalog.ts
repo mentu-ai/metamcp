@@ -2,22 +2,14 @@ import type { ToolDefinition, ToolMatch } from './types.js';
 import { Store } from './store.js';
 import type { VectorStore, VectorSearchResult } from './vector-store.js';
 import type { Embedder } from './embedder.js';
-import type { PerceptionProvider, PerceptionResult, ToolArtifact, RankedTool } from './perception.js';
-import { toArtifact, DOMAIN_KEYWORDS, PerceptionMode } from './perception.js';
 
 /**
  * Two-tier tool catalog with Store-backed caching and hybrid search.
  *
  * Hybrid search: semantic similarity + keyword scoring.
  *
- * PiecesOS uses pure vector similarity (search_simd.rs).
- * MetaMCP adds keyword scoring as a second signal because:
- * - Tool names are highly structured (not natural language)
- * - Exact name matches should always rank highest
- * - Keyword scoring is the proven fallback when embeddings unavailable
- *
- * Score formula (2-tier): 0.6 * semantic + 0.4 * keyword (normalized)
- * Score formula (3-tier, when perception batch ready): 0.45 * semantic + 0.30 * keyword + 0.25 * perception
+ * Score formula: 0.6 * semantic + 0.4 * keyword (normalized)
+ * Falls back to keyword-only when embeddings are unavailable.
  */
 const SCORE_EXACT_NAME = 10;
 const SCORE_NAME_CONTAINS = 5;
@@ -30,16 +22,10 @@ const SEMANTIC_WEIGHT = 0.6;
 const KEYWORD_WEIGHT = 0.4;
 const VECTOR_CANDIDATE_LIMIT = 50;
 
-// 3-tier weights (used when perception batch cache is ready)
-const SEMANTIC_WEIGHT_3T = 0.45;
-const KEYWORD_WEIGHT_3T = 0.30;
-const PERCEPTION_WEIGHT = 0.25;
-
 export interface CatalogOptions {
   loader?: (serverName: string) => Promise<ToolDefinition[]>;
   vectorStore?: VectorStore;
   embedder?: Embedder;
-  perceptionProvider?: PerceptionProvider;
 }
 
 function normalize(scores: number[]): number[] {
@@ -52,7 +38,6 @@ export class ToolCatalog {
   private store: Store<string, ToolDefinition[]>;
   private vectorStore: VectorStore | null;
   private embedder: Embedder | null;
-  private perceptionProvider: PerceptionProvider | null;
 
   constructor(options?: CatalogOptions) {
     this.store = new Store<string, ToolDefinition[]>({
@@ -62,7 +47,6 @@ export class ToolCatalog {
     this.store.startCleanup(CATALOG_CLEANUP_MS);
     this.vectorStore = options?.vectorStore ?? null;
     this.embedder = options?.embedder ?? null;
-    this.perceptionProvider = options?.perceptionProvider ?? null;
   }
 
   registerServer(serverName: string, tools: ToolDefinition[]): void {
@@ -119,7 +103,7 @@ export class ToolCatalog {
     return all;
   }
 
-  async search(query: string, server?: string, topN: number = DEFAULT_TOP_N, perceptionMode?: PerceptionMode): Promise<ToolMatch[]> {
+  async search(query: string, server?: string, topN: number = DEFAULT_TOP_N): Promise<ToolMatch[]> {
     const words = query.toLowerCase().split(/\s+/).filter(w => w.length > 0);
     if (words.length === 0) return [];
 
@@ -128,7 +112,7 @@ export class ToolCatalog {
       try {
         const queryEmbedding = await this.embedder.embed(query);
         if (queryEmbedding.length > 0) {
-          return this.hybridSearch(queryEmbedding, words, server, topN, perceptionMode);
+          return this.hybridSearch(queryEmbedding, words, server, topN);
         }
       } catch {
         // Fall through to keyword-only
@@ -138,7 +122,7 @@ export class ToolCatalog {
     return this.keywordSearch(words, server, topN);
   }
 
-  /** Synchronous keyword-only search (original algorithm, no regression). */
+  /** Synchronous keyword-only search (original algorithm). */
   keywordSearch(words: string[], server?: string, topN: number = DEFAULT_TOP_N): ToolMatch[] {
     const source = server
       ? (this.store.getIfCached(server) ?? [])
@@ -181,14 +165,12 @@ export class ToolCatalog {
     words: string[],
     server?: string,
     topN: number = DEFAULT_TOP_N,
-    perceptionMode?: PerceptionMode,
   ): ToolMatch[] {
     if (!this.vectorStore) return this.keywordSearch(words, server, topN);
 
-    // Get vector similarity candidates
-    const vectorResults = this.vectorStore.search(queryEmbedding, VECTOR_CANDIDATE_LIMIT);
+    const candidateLimit = server ? VECTOR_CANDIDATE_LIMIT * 3 : VECTOR_CANDIDATE_LIMIT;
+    const vectorResults = this.vectorStore.search(queryEmbedding, candidateLimit);
 
-    // Filter by server if specified
     const filtered: VectorSearchResult[] = server
       ? vectorResults.filter(r => r.server === server)
       : vectorResults;
@@ -197,7 +179,6 @@ export class ToolCatalog {
       return this.keywordSearch(words, server, topN);
     }
 
-    // Build a tool lookup from the catalog
     const allTools = server
       ? (this.store.getIfCached(server) ?? [])
       : this.getAllTools();
@@ -206,7 +187,6 @@ export class ToolCatalog {
       toolMap.set(`${tool.server}:${tool.name}`, tool);
     }
 
-    // Compute keyword scores for vector candidates
     const candidates: Array<{
       tool: ToolDefinition;
       semanticScore: number;
@@ -267,29 +247,11 @@ export class ToolCatalog {
 
     if (candidates.length === 0) return [];
 
-    // Normalize score sets
     const semanticScores = normalize(candidates.map(c => c.semanticScore));
     const keywordScores = normalize(candidates.map(c => c.keywordScore));
 
-    // Third tier: perception-boosted scores from batch cache
-    const perceptionScores = perceptionMode?.isBatchReady
-      ? this.searchByPerception(words, perceptionMode, server)
-      : null;
-
-    const use3Tier = perceptionScores !== null && perceptionScores.size > 0;
-
-    // Look up raw perception scores for candidates, then normalize
-    const rawPerception = candidates.map(c => {
-      if (!perceptionScores) return 0;
-      return perceptionScores.get(`${c.tool.server}:${c.tool.name}`) ?? 0;
-    });
-    const normPerception = use3Tier ? normalize(rawPerception) : rawPerception;
-
-    // Combine: 3-tier when perception available, 2-tier otherwise
     const results: ToolMatch[] = candidates.map((c, i) => {
-      const combined = use3Tier
-        ? SEMANTIC_WEIGHT_3T * semanticScores[i] + KEYWORD_WEIGHT_3T * keywordScores[i] + PERCEPTION_WEIGHT * normPerception[i]
-        : SEMANTIC_WEIGHT * semanticScores[i] + KEYWORD_WEIGHT * keywordScores[i];
+      const combined = SEMANTIC_WEIGHT * semanticScores[i] + KEYWORD_WEIGHT * keywordScores[i];
       return {
         tool: c.tool,
         score: combined,
@@ -299,66 +261,6 @@ export class ToolCatalog {
 
     results.sort((a, b) => b.score - a.score);
     return results.slice(0, topN);
-  }
-
-  /**
-   * Third search tier: perception-boosted results from batch cache.
-   * Maps query to domains via DOMAIN_KEYWORDS, filters batch cache by matching domains,
-   * scores by domain match (10) + relevance score * 5.
-   */
-  searchByPerception(
-    words: string[],
-    perceptionMode: PerceptionMode,
-    server?: string,
-  ): Map<string, number> {
-    const scores = new Map<string, number>();
-    if (!perceptionMode.isBatchReady) return scores;
-
-    // Map query words to matching domains
-    const matchedDomains = new Set<string>();
-    const domainMap = PerceptionMode.domainMap;
-    for (const [domain, keywords] of Object.entries(domainMap)) {
-      for (const word of words) {
-        if (keywords.some(kw => kw.includes(word) || word.includes(kw))) {
-          matchedDomains.add(domain);
-        }
-      }
-    }
-
-    // Score tools from batch cache
-    const allTools = server
-      ? (this.store.getIfCached(server) ?? [])
-      : this.getAllTools();
-
-    for (const tool of allTools) {
-      const cacheKey = `${tool.server}.${tool.name}`;
-      const cached = perceptionMode.getBatchClassification(cacheKey);
-      if (!cached) continue;
-
-      let score = 0;
-      if (matchedDomains.has(cached.domain.label)) {
-        score += 10; // domain match boost
-      }
-      score += cached.relevance.score * 5; // relevance contribution
-
-      if (score > 0) {
-        scores.set(`${tool.server}:${tool.name}`, score);
-      }
-    }
-
-    return scores;
-  }
-
-  /** Classify a tool's domain via the perception provider (if available). */
-  async classifyDomain(tool: ToolDefinition): Promise<PerceptionResult | null> {
-    if (!this.perceptionProvider) return null;
-    return this.perceptionProvider.classifyDomain(toArtifact(tool));
-  }
-
-  /** Score a tool's relevance to a query via the perception provider (if available). */
-  async scoreRelevance(query: string, tool: ToolDefinition): Promise<PerceptionResult | null> {
-    if (!this.perceptionProvider) return null;
-    return this.perceptionProvider.scoreRelevance(query, toArtifact(tool));
   }
 
   getSummary(): Array<{ server: string; toolCount: number; tools: string[] }> {

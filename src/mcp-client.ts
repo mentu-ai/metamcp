@@ -1,8 +1,12 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { Tool, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { ServerConfig, ToolDefinition } from './types.js';
-import type { ElicitationRequest, ElicitationResponse } from './elicitation.js';
+import { FileOAuthProvider } from './oauth-provider.js';
+import { log } from './log.js';
 import type { ChildProcess } from 'node:child_process';
 
 /**
@@ -13,13 +17,11 @@ interface TransportInternals {
   _process?: ChildProcess;
 }
 
-export type ElicitationCallback = (server: string, request: ElicitationRequest) => Promise<ElicitationResponse>;
-
 export class McpClient {
   private client: Client | null = null;
-  private transport: StdioClientTransport | null = null;
+  private transport: StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport | null = null;
   readonly config: ServerConfig;
-  private elicitationCallback: ElicitationCallback | null = null;
+  private authProvider: FileOAuthProvider | null = null;
 
   constructor(config: ServerConfig) {
     this.config = config;
@@ -27,78 +29,78 @@ export class McpClient {
 
   /** True if this client connects to a remote server (no local PID). */
   get isRemote(): boolean {
-    return false; // Open-source extraction: stdio only
-  }
-
-  onElicitation(callback: ElicitationCallback): void {
-    this.elicitationCallback = callback;
+    return this.config.transport === 'http' || this.config.transport === 'sse';
   }
 
   async connect(): Promise<void> {
-    let command: string;
-    let args: string[];
-    let env: Record<string, string>;
-
-    if (this.config.sandbox) {
-      // Spawn inside mentu-runtime VM
-      command = 'mentu-runtime';
-      args = [
-        'exec',
-        '--profile', this.config.sandbox,
-        '--',
-        this.config.command,
-        ...(this.config.args ?? []),
-      ];
-      env = { ...process.env } as Record<string, string>;
+    if (this.config.transport === 'http' && this.config.url) {
+      // Remote HTTP (Streamable HTTP) transport
+      if (this.config.oauth) {
+        this.authProvider = new FileOAuthProvider(this.config.name);
+        this.transport = new StreamableHTTPClientTransport(
+          new URL(this.config.url),
+          { authProvider: this.authProvider }
+        );
+      } else {
+        this.transport = new StreamableHTTPClientTransport(
+          new URL(this.config.url),
+          { requestInit: { headers: this.config.headers ?? {} } }
+        );
+      }
+    } else if (this.config.transport === 'sse' && this.config.url) {
+      // Remote SSE transport
+      this.transport = new SSEClientTransport(
+        new URL(this.config.url),
+        { requestInit: { headers: this.config.headers ?? {} } }
+      );
     } else {
-      // Spawn as local process (existing behavior)
-      command = this.config.command;
-      args = this.config.args ?? [];
-      env = {
-        ...process.env,
-        ...this.config.env,
-      } as Record<string, string>;
+      // Local stdio transport (default)
+      this.transport = new StdioClientTransport({
+        command: this.config.command,
+        args: this.config.args ?? [],
+        env: {
+          ...process.env,
+          ...this.config.env,
+        } as Record<string, string>,
+      });
     }
-
-    this.transport = new StdioClientTransport({ command, args, env });
 
     this.client = new Client({
       name: 'metamcp',
       version: '1.0.0',
     });
 
-    // Register elicitation handler before connecting.
-    // MCP servers may send elicitation requests as server-initiated
-    // notifications. We use the fallback handler to catch elicitation
-    // notifications since the SDK doesn't have a built-in schema for them.
-    if (this.elicitationCallback) {
-      const callback = this.elicitationCallback;
-      const serverName = this.config.name;
-      this.client.fallbackNotificationHandler = async (notification) => {
-        if (notification.method === 'elicitation/request') {
-          const params = notification.params as unknown as ElicitationRequest;
-          await callback(serverName, params);
-        }
-      };
+    try {
+      await this.client.connect(this.transport);
+    } catch (err) {
+      if (err instanceof UnauthorizedError && this.authProvider) {
+        log('info', 'oauth authorization required, waiting for browser callback', { server: this.config.name });
+        const code = await this.authProvider.waitForCallback();
+        await (this.transport as StreamableHTTPClientTransport).finishAuth(code);
+        // Reconnect with fresh client after auth
+        this.client = new Client({ name: 'metamcp', version: '1.0.0' });
+        await this.client.connect(this.transport);
+      } else {
+        throw err;
+      }
     }
-
-    await this.client.connect(this.transport);
   }
 
   /**
-   * PID of the child process.
-   * Uses public transport.pid getter (available since SDK v1.27.1).
+   * PID of the child process (null for remote servers).
    */
   get pid(): number | null {
-    return this.transport?.pid ?? null;
+    if (this.isRemote) return null;
+    return (this.transport as StdioClientTransport)?.pid ?? null;
   }
 
   /**
    * Close stdin pipe to child — signals no more input.
    * Returns true if stdin was successfully ended, false if fallback to kill is needed.
+   * No-op for remote servers (returns false to skip PID-based shutdown).
    */
   closeStdin(): boolean {
-    if (!this.transport) return false;
+    if (this.isRemote || !this.transport) return false;
     const internals = this.transport as unknown as TransportInternals;
     const proc = internals._process;
     if (!proc?.stdin) return false;
@@ -133,7 +135,11 @@ export class McpClient {
 
   async callTool(name: string, args?: Record<string, unknown>): Promise<CallToolResult> {
     if (!this.client) throw new Error(`Not connected to ${this.config.name}`);
-    const result = await this.client.callTool({ name, arguments: args });
+    const result = await this.client.callTool(
+      { name, arguments: args },
+      undefined,
+      { timeout: this.config.timeoutMs ?? 60_000 },
+    );
     return result as CallToolResult;
   }
 
