@@ -28,7 +28,7 @@ async function test(name: string, fn: () => Promise<void> | void): Promise<void>
     failed++;
     const msg = err instanceof Error ? err.message : String(err);
     failures.push(`${name}: ${msg}`);
-    console.log(`  FAIL: ${name} — ${msg}`);
+    console.log(`  FAIL: ${name} - ${msg}`);
   }
 }
 

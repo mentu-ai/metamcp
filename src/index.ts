@@ -1,8 +1,10 @@
-import { readFileSync, watch, existsSync, writeFileSync } from 'node:fs';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { readFileSync, watch, existsSync, writeFileSync, statSync } from 'node:fs';
 import { resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
@@ -25,6 +27,10 @@ import { scrubSecrets } from './secret-scrubber.js';
 
 interface CliOptions {
   configPath?: string;
+  transport: 'stdio' | 'http';
+  host: string;
+  port: number;
+  httpPath: string;
   maxConnections: number;
   idleTimeout: number;
   failureThreshold: number;
@@ -43,7 +49,7 @@ function readPackageVersion(): string {
 }
 
 function printHelp(): void {
-  const help = `metamcp — Meta-MCP server, OS for MCP servers
+  const help = `metamcp - Meta-MCP server, OS for MCP servers
 
 Usage: metamcp [options]
        metamcp init [--yes] [--json]
@@ -62,6 +68,10 @@ Commands:
 
 Options:
   --config <path>            Path to .mcp.json (default: .mcp.json)
+  --transport <stdio|http>   Inbound transport (default: stdio; env METAMCP_TRANSPORT)
+  --host <host>              HTTP host when --transport http (default: 0.0.0.0)
+  --port <port>              HTTP port when --transport http (default: env PORT or 8080)
+  --http-path <path>         Streamable HTTP MCP path (default: /mcp)
   --max-connections <n>      Pool max connections (default: 20)
   --idle-timeout <ms>        Idle connection timeout in ms (default: 300000)
   --failure-threshold <n>    Circuit breaker consecutive failures (default: 5)
@@ -75,6 +85,11 @@ Options:
 
 function parseArgs(argv: string[]): CliOptions {
   const opts: CliOptions = {
+    configPath: process.env.METAMCP_CONFIG,
+    transport: process.env.METAMCP_TRANSPORT === 'http' ? 'http' : 'stdio',
+    host: process.env.HOST ?? '0.0.0.0',
+    port: Number(process.env.PORT ?? '8080'),
+    httpPath: process.env.METAMCP_HTTP_PATH ?? '/mcp',
     maxConnections: 20,
     idleTimeout: 300_000,
     failureThreshold: 5,
@@ -95,6 +110,24 @@ function parseArgs(argv: string[]): CliOptions {
         break;
       case '--config':
         opts.configPath = argv[++i];
+        break;
+      case '--transport': {
+        const transport = argv[++i];
+        if (transport !== 'stdio' && transport !== 'http') {
+          process.stderr.write(`Invalid transport: ${transport}\n`);
+          process.exit(1);
+        }
+        opts.transport = transport;
+        break;
+      }
+      case '--host':
+        opts.host = argv[++i];
+        break;
+      case '--port':
+        opts.port = Number(argv[++i]);
+        break;
+      case '--http-path':
+        opts.httpPath = normalizeHttpPath(argv[++i]);
         break;
       case '--max-connections':
         opts.maxConnections = Number(argv[++i]);
@@ -121,6 +154,11 @@ function parseArgs(argv: string[]): CliOptions {
   return opts;
 }
 
+function normalizeHttpPath(path: string): string {
+  if (!path) return '/mcp';
+  return path.startsWith('/') ? path : `/${path}`;
+}
+
 // --- Subcommand: init ---
 if (process.argv[2] === 'init') {
   const { runInit } = await import('./init.js');
@@ -138,23 +176,25 @@ if (process.argv[2] === 'add') {
   process.exit(0);
 }
 
+// --- Subcommand: export-evidence ---
+if (process.argv[2] === 'export-evidence') {
+  const { runEvidenceExportCli } = await import('./evidence-export.js');
+  await runEvidenceExportCli(process.argv.slice(3));
+  process.exit(0);
+}
+
 const cliOptions = parseArgs(process.argv);
 
 let vectorStore: VectorStore | undefined;
 try {
   vectorStore = new VectorStore();
 } catch (err) {
-  log('warn', 'vector store unavailable — semantic search disabled', {
+  log('warn', 'vector store unavailable - semantic search disabled', {
     error: err instanceof Error ? err.message : String(err),
   });
 }
 
 const embedder = new Embedder();
-
-const server = new Server(
-  { name: 'metamcp', version: readPackageVersion() },
-  { capabilities: { tools: {} } }
-);
 
 const childManager = new ChildManager(
   {
@@ -170,9 +210,15 @@ const intentRouter = new IntentRouter();
 const trustPolicy = new TrustPolicy();
 const skillCatalog = new SkillCatalog();
 let serverConfigs: ServerConfig[] = [];
+const stdioServer = createMetaMcpServer();
 
+function createMetaMcpServer(): Server {
+  const server = new Server(
+    { name: 'metamcp', version: readPackageVersion() },
+    { capabilities: { tools: {} } }
+  );
 
-server.setRequestHandler(ListToolsRequestSchema, async () => {
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
@@ -248,9 +294,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
     ],
   };
-});
+  });
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   const result = await (async () => {
@@ -276,7 +322,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   })();
 
   // Scrub known secret patterns from any text content before it leaves the process.
-  // This is the chokepoint — every tool response passes through here.
+  // This is the chokepoint - every tool response passes through here.
   if (result && Array.isArray((result as { content?: unknown[] }).content)) {
     const r = result as { content: Array<{ type: string; text?: string } & Record<string, unknown>> };
     r.content = r.content.map(c =>
@@ -286,7 +332,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     );
   }
   return result;
-});
+  });
+
+  return server;
+}
 
 async function handleDiscover(args?: Record<string, unknown>) {
   const query = args?.query as string | undefined;
@@ -355,7 +404,7 @@ async function handleProvision(args?: Record<string, unknown>) {
     };
   }
 
-  // Registry matches — check trust for auto-provisioning
+  // Registry matches - check trust for auto-provisioning
   if (result.registryMatches.length > 0) {
     const matches = result.registryMatches.map(entry => {
       const confidence = computeRegistryConfidence(intent, entry.name, entry.description);
@@ -589,7 +638,7 @@ async function handleSkillAdvise(args?: Record<string, unknown>) {
 
   const advice = skillCatalog.advise(skillName, serverChecker);
   if (!advice) {
-    // Check if any gallery server matches — suggest installing
+    // Check if any gallery server matches - suggest installing
     const { GALLERY } = await import('./gallery.js');
     const galleryMatch = GALLERY.find(g =>
       g.name.toLowerCase().includes(skillName.toLowerCase()) ||
@@ -645,6 +694,7 @@ function computeRegistryConfidence(intent: string, name: string, description: st
 }
 
 async function main() {
+  cliOptions.httpPath = normalizeHttpPath(cliOptions.httpPath);
   serverConfigs = loadConfig(cliOptions.configPath);
 
   // Auto-discover servers from installed editors when --import is set
@@ -672,10 +722,16 @@ async function main() {
     cooldown: cliOptions.cooldown,
   });
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  let closeInboundTransport: (() => Promise<void>) | undefined;
 
-  log('info', 'server started', { transport: 'stdio' });
+  if (cliOptions.transport === 'http') {
+    closeInboundTransport = await startHttpTransport();
+  } else {
+    const transport = new StdioServerTransport();
+    await stdioServer.connect(transport);
+    closeInboundTransport = () => transport.close();
+    log('info', 'server started', { transport: 'stdio' });
+  }
 
   // Hot-reload: watch .mcp.json for changes (e.g. from `metamcp add`)
   // Uses dual strategy: watch file directly when it exists, poll as fallback.
@@ -722,16 +778,16 @@ async function main() {
   watchFile();
 
   // Strategy 2: lightweight poll every 2s to catch file creation and atomic renames
-  // Checks mtime only — no disk read unless changed.
+  // Checks mtime only - no disk read unless changed.
   const pollInterval = setInterval(() => {
     try {
       if (!existsSync(configPath)) {
         if (lastConfigMtime !== 0) lastConfigMtime = 0; // file was deleted
         return;
       }
-      const { mtimeMs } = require('node:fs').statSync(configPath);
+      const { mtimeMs } = statSync(configPath);
       if (mtimeMs !== lastConfigMtime) {
-        if (lastConfigMtime === 0) watchFile(); // file just appeared — start watching
+        if (lastConfigMtime === 0) watchFile(); // file just appeared - start watching
         lastConfigMtime = mtimeMs;
         scheduleReload();
       }
@@ -743,9 +799,10 @@ async function main() {
   async function gracefulShutdown() {
     if (shuttingDown) return;
     shuttingDown = true;
+    if (closeInboundTransport) await closeInboundTransport();
     await childManager.shutdownAll();
     vectorStore?.close();
-    await server.close();
+    await stdioServer.close();
     process.exit(0);
   }
 
@@ -754,7 +811,7 @@ async function main() {
 
   process.stdin.on('end', () => {
     if (!shuttingDown) {
-      log('info', 'stdin closed — parent disconnected, shutting down');
+      log('info', 'stdin closed - parent disconnected, shutting down');
       gracefulShutdown();
     }
   });
@@ -763,6 +820,146 @@ async function main() {
     log('error', 'uncaught exception', { error: err.message });
     childManager.killAllSync();
     process.exit(1);
+  });
+}
+
+async function startHttpTransport(): Promise<() => Promise<void>> {
+  const httpServer = createServer(async (req, res) => {
+    try {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      if (url.pathname === '/healthz') {
+        sendJson(res, 200, {
+          ok: true,
+          name: 'metamcp',
+          version: readPackageVersion(),
+          transport: 'http',
+        });
+        return;
+      }
+
+      if (url.pathname !== cliOptions.httpPath) {
+        sendJson(res, 404, { error: 'not_found' });
+        return;
+      }
+
+      if (!isAuthorized(req)) {
+        sendJson(res, 401, { error: 'unauthorized' });
+        return;
+      }
+
+      if (req.method === 'POST') {
+        await handleStatelessMcpPost(req, res);
+        return;
+      }
+
+      if (req.method === 'GET' || req.method === 'DELETE') {
+        sendJson(res, 405, {
+          jsonrpc: '2.0',
+          error: { code: -32000, message: 'Method not allowed.' },
+          id: null,
+        });
+        return;
+      }
+
+      res.statusCode = 405;
+      res.setHeader('Allow', 'GET, POST, DELETE');
+      res.end('Method Not Allowed');
+    } catch (err) {
+      log('error', 'http transport request failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      if (!res.headersSent) {
+        sendJson(res, 500, {
+          jsonrpc: '2.0',
+          error: { code: -32603, message: 'Internal server error' },
+          id: null,
+        });
+      }
+    }
+  });
+
+  await new Promise<void>((resolveListen, rejectListen) => {
+    httpServer.once('error', rejectListen);
+    httpServer.listen(cliOptions.port, cliOptions.host, () => {
+      httpServer.off('error', rejectListen);
+      log('info', 'server started', {
+        transport: 'http',
+        host: cliOptions.host,
+        port: cliOptions.port,
+        path: cliOptions.httpPath,
+      });
+      resolveListen();
+    });
+  });
+
+  return async () => {
+    await new Promise<void>((resolveClose) => httpServer.close(() => resolveClose()));
+  };
+}
+
+async function handleStatelessMcpPost(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const requestServer = createMetaMcpServer();
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+    enableJsonResponse: true,
+  });
+
+  let closed = false;
+  const closeRequestServer = async () => {
+    if (closed) return;
+    closed = true;
+    await transport.close();
+    await requestServer.close();
+  };
+
+  res.on('close', () => {
+    void closeRequestServer();
+  });
+
+  await requestServer.connect(transport);
+  const body = await readJsonBody(req);
+  await transport.handleRequest(req, res, body);
+  if (res.writableEnded) await closeRequestServer();
+}
+
+function isAuthorized(req: IncomingMessage): boolean {
+  const token = process.env.METAMCP_HTTP_BEARER_TOKEN;
+  if (!token) return true;
+  return req.headers.authorization === `Bearer ${token}` || req.headers['x-metamcp-token'] === token;
+}
+
+function sendJson(res: ServerResponse, status: number, payload: unknown): void {
+  res.statusCode = status;
+  res.setHeader('content-type', 'application/json');
+  res.end(JSON.stringify(payload));
+}
+
+function readJsonBody(req: IncomingMessage): Promise<unknown> {
+  return new Promise((resolveBody, rejectBody) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    req.on('data', (chunk: Buffer) => {
+      total += chunk.length;
+      if (total > 4 * 1024 * 1024) {
+        rejectBody(new Error('request body too large'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('error', rejectBody);
+    req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf-8');
+      if (!raw.trim()) {
+        resolveBody(undefined);
+        return;
+      }
+      try {
+        resolveBody(JSON.parse(raw));
+      } catch {
+        rejectBody(new Error('invalid JSON request body'));
+      }
+    });
   });
 }
 

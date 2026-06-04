@@ -68,7 +68,7 @@ export class MCPRegistry {
         return;
       }
     } catch {
-      // API unavailable — fall through
+      // API unavailable - fall through
     }
 
     // Try cache

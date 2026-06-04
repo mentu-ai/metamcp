@@ -1,12 +1,12 @@
 /**
- * skill-catalog.ts — Index and search Claude Code skills with MCP readiness checks.
+ * skill-catalog.ts - Index and search Claude Code skills with MCP readiness checks.
  *
  * Scans two directories for SKILL.md files:
  *   1. ~/.claude/skills/        (personal / infrastructure)
- *   2. <cwd>/.claude/skills/    (project / domain — overrides personal)
+ *   2. <cwd>/.claude/skills/    (project / domain - overrides personal)
  *
  * Parses standard frontmatter + MetaSkill Protocol extensions.
- * Advisory only — never invokes skills.
+ * Advisory only - never invokes skills.
  */
 import { readFileSync, existsSync, readdirSync, statSync, watch } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
@@ -131,13 +131,13 @@ export class SkillCatalog {
 
   reload(): void {
     this.skills.clear();
-    // Scan in order — later entries override earlier ones (project overrides personal)
+    // Scan in order - later entries override earlier ones (project overrides personal)
     for (const { dir, source } of this.scanDirs) {
       for (const entry of scanDirectory(dir, source)) {
         this.skills.set(entry.name, entry);
       }
     }
-    // log('info', ...) omitted — noisy during CLI usage
+    // log('info', ...) omitted - noisy during CLI usage
   }
 
   private startWatching(): void {

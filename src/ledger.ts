@@ -1,8 +1,8 @@
 /**
- * MetaMCP Ledger — async append-only JSONL logging.
+ * MetaMCP Ledger - async append-only JSONL logging.
  *
  * Every mcp_call and mcp_execute invocation is recorded to .metamcp/ledger.jsonl.
- * Non-blocking fire-and-forget writes — never blocks tool execution.
+ * Non-blocking fire-and-forget writes - never blocks tool execution.
  */
 
 import { appendFile, mkdir } from 'node:fs/promises';
@@ -30,12 +30,12 @@ async function ensureDir(): Promise<void> {
     await mkdir(LEDGER_DIR, { recursive: true });
     dirEnsured = true;
   } catch {
-    // directory may already exist — that's fine
+    // directory may already exist - that's fine
     dirEnsured = true;
   }
 }
 
-/** Append a ledger entry. Non-blocking — errors are logged but never thrown. */
+/** Append a ledger entry. Non-blocking - errors are logged but never thrown. */
 export function recordLedger(entry: LedgerEntry): void {
   // Fire-and-forget: do not await, do not block caller
   void (async () => {

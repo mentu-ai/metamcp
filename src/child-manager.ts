@@ -30,10 +30,10 @@ export class ChildManager extends EventEmitter {
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
 
   /**
-   * Idle list — LIFO ordered.
+   * Idle list - LIFO ordered.
    *
-   * New idle children inserted at HEAD (index 0) — most recently idled.
-   * Eviction removes from TAIL (last element) — oldest idle evicted first.
+   * New idle children inserted at HEAD (index 0) - most recently idled.
+   * Eviction removes from TAIL (last element) - oldest idle evicted first.
    */
   private idleList: string[] = [];
 
@@ -63,7 +63,7 @@ export class ChildManager extends EventEmitter {
       // Remove if already in list (shouldn't happen, but defensive)
       const idx = this.idleList.indexOf(child.config.name);
       if (idx !== -1) this.idleList.splice(idx, 1);
-      // Insert at HEAD (index 0) — LIFO
+      // Insert at HEAD (index 0) - LIFO
       this.idleList.unshift(child.config.name);
     } else if (oldState === ConnectionState.IDLE && newState !== ConnectionState.IDLE) {
       // Remove from idle list when leaving IDLE
@@ -155,12 +155,12 @@ export class ChildManager extends EventEmitter {
     // Circuit breaker check
     const cbChild = this.children.get(serverName);
     if (cbChild?.circuitBreaker.isOpen()) {
-      throw new Error(`Circuit breaker open for ${serverName} — cooldown ${this.pool.cooldownMs}ms`);
+      throw new Error(`Circuit breaker open for ${serverName} - cooldown ${this.pool.cooldownMs}ms`);
     }
 
     await this.ensureConnected(serverName);
 
-    // Get child AFTER ensureConnected — it may have created a fresh one
+    // Get child AFTER ensureConnected - it may have created a fresh one
     const child = this.children.get(serverName);
     if (!child) throw new Error(`Unknown server: ${serverName}`);
 
@@ -175,7 +175,7 @@ export class ChildManager extends EventEmitter {
       this.setState(child, ConnectionState.FAILED);
 
       // Only transient errors count toward circuit breaker.
-      // Auth errors are not transient — tripping the breaker won't help.
+      // Auth errors are not transient - tripping the breaker won't help.
       if (isTransientIssue(issue)) {
         child.circuitBreaker.recordFailure();
       } else {
@@ -288,7 +288,7 @@ export class ChildManager extends EventEmitter {
     try {
       process.kill(pid, signal);
     } catch {
-      // Process already exited — ignore
+      // Process already exited - ignore
     }
   }
 
@@ -302,7 +302,7 @@ export class ChildManager extends EventEmitter {
     await Promise.allSettled(shutdowns);
   }
 
-  /** Synchronous kill of all child PIDs — last resort on crash. */
+  /** Synchronous kill of all child PIDs - last resort on crash. */
   killAllSync(): void {
     for (const child of this.children.values()) {
       if (child.pid) {
@@ -394,11 +394,11 @@ export class ChildManager extends EventEmitter {
   private evictPoolConnection(): boolean {
     if (this.idleList.length === 0) return false;
 
-    // Evict from TAIL (oldest idle — LRU)
+    // Evict from TAIL (oldest idle - LRU)
     const name = this.idleList[this.idleList.length - 1];
     const child = this.children.get(name);
     if (!child) {
-      // Stale entry — clean up and retry
+      // Stale entry - clean up and retry
       this.idleList.pop();
       return this.evictPoolConnection();
     }

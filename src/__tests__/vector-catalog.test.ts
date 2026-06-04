@@ -29,7 +29,7 @@ async function test(name: string, fn: () => Promise<void>): Promise<void> {
     failed++;
     const msg = err instanceof Error ? err.message : String(err);
     failures.push(`${name}: ${msg}`);
-    console.log(`  FAIL: ${name} — ${msg}`);
+    console.log(`  FAIL: ${name} - ${msg}`);
   }
 }
 
@@ -287,7 +287,7 @@ async function runTests(): Promise<void> {
     // Catalog with empty vector store
     const catalogWithVS = new ToolCatalog({ vectorStore: vs, embedder });
     catalogWithVS.registerServer('fs', tools);
-    // Don't embed — vector store is empty, should fall through to keyword
+    // Don't embed - vector store is empty, should fall through to keyword
     const vsResults = await catalogWithVS.search('read');
 
     assertEqual(baselineResults.length, vsResults.length, 'same number of results');

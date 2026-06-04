@@ -66,7 +66,7 @@ test(catalog): add fuzzy search edge cases
 - All tests must pass (`npm test`)
 - Type checking must pass (`npm run typecheck`)
 - Describe the "why" in the PR description, not just the "what"
-- Keep changes focused — avoid unrelated refactors in the same PR
+- Keep changes focused - avoid unrelated refactors in the same PR
 
 ## Reporting Issues
 

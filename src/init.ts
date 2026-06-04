@@ -1,5 +1,5 @@
 /**
- * metamcp init — Auto-configure MetaMCP as MCP server across all supported clients.
+ * metamcp init - Auto-configure MetaMCP as MCP server across all supported clients.
  *
  * Discovers the binary path, writes config to 9+ client locations,
  * returns structured JSON for programmatic consumption.
@@ -148,7 +148,7 @@ function writeJsonConfig(
       existing = JSON.parse(readFileSync(filePath, 'utf-8')) as Record<string, unknown>;
       status = 'added';
     } catch {
-      // Invalid JSON — overwrite with fresh config
+      // Invalid JSON - overwrite with fresh config
       existing = null;
     }
   }

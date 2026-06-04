@@ -1,0 +1,53 @@
+substitutions:
+  _REGION: us-central1
+  _REPOSITORY: metamcp
+  _SERVICE: metamcp-gateway
+  _SERVICE_ACCOUNT: metamcp-gateway
+  _MCP_CONFIG_SECRET: metamcp-mcp-json
+  _HTTP_TOKEN_SECRET: metamcp-http-token
+
+steps:
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        gcloud artifacts repositories describe "$_REPOSITORY" --location "$_REGION" \
+          || gcloud artifacts repositories create "$_REPOSITORY" \
+            --repository-format docker \
+            --location "$_REGION" \
+            --description "MetaMCP container images"
+
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$SHORT_SHA
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:latest
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        gcloud run deploy "$_SERVICE" \
+          --project "$PROJECT_ID" \
+          --region "$_REGION" \
+          --image "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$SHORT_SHA" \
+          --service-account "$_SERVICE_ACCOUNT@$PROJECT_ID.iam.gserviceaccount.com" \
+          --no-allow-unauthenticated \
+          --port 8080 \
+          --set-env-vars "METAMCP_TRANSPORT=http,METAMCP_HTTP_PATH=/mcp,METAMCP_CONFIG=/secrets/metamcp/mcp.json" \
+          --set-secrets "/secrets/metamcp/mcp.json=${_MCP_CONFIG_SECRET}:latest,METAMCP_HTTP_BEARER_TOKEN=${_HTTP_TOKEN_SECRET}:latest"
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$SHORT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:latest

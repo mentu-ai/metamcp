@@ -10,7 +10,7 @@ import { execute } from '../sandbox.js';
 import { ChildManager } from '../child-manager.js';
 import { ToolCatalog } from '../catalog.js';
 
-// Minimal stubs for testing — no real child servers needed
+// Minimal stubs for testing - no real child servers needed
 const childManager = new ChildManager();
 const catalog = new ToolCatalog();
 
@@ -22,7 +22,7 @@ async function assertThrows(fn: () => Promise<unknown>, label: string): Promise<
     if (err instanceof Error && err.message.startsWith('Expected')) {
       throw err;
     }
-    // Expected error — pass
+    // Expected error - pass
   }
 }
 
@@ -40,13 +40,13 @@ async function runTests(): Promise<void> {
       failed++;
       const msg = err instanceof Error ? err.message : String(err);
       failures.push(`${name}: ${msg}`);
-      console.log(`  FAIL: ${name} — ${msg}`);
+      console.log(`  FAIL: ${name} - ${msg}`);
     }
   }
 
   console.log('Sandbox Escape Vector Tests\n');
 
-  // 1. Function constructor escape — must throw
+  // 1. Function constructor escape - must throw
   await test('Function constructor escape blocked', async () => {
     await assertThrows(
       () => execute(`return this.constructor.constructor('return process')()`, childManager, catalog),
@@ -54,7 +54,7 @@ async function runTests(): Promise<void> {
     );
   });
 
-  // 2. require — must throw
+  // 2. require - must throw
   await test('require() blocked', async () => {
     await assertThrows(
       () => execute(`return require('fs')`, childManager, catalog),
@@ -62,7 +62,7 @@ async function runTests(): Promise<void> {
     );
   });
 
-  // 3. process access — must throw
+  // 3. process access - must throw
   await test('process access blocked', async () => {
     await assertThrows(
       () => execute(`return process.exit(1)`, childManager, catalog),
@@ -70,15 +70,22 @@ async function runTests(): Promise<void> {
     );
   });
 
-  // 4. Infinite loop — must timeout
+  // 4. Infinite loop - must timeout
   await test('Infinite loop times out', async () => {
     await assertThrows(
-      () => execute(`while(true){}`, childManager, catalog),
+      () => execute(`while(true){}`, childManager, catalog, { timeoutMs: 50 }),
       'infinite loop timeout',
     );
   });
 
-  // 5. Basic computation — must return 2
+  await test('Promise microtask infinite loop times out', async () => {
+    await assertThrows(
+      () => execute(`Promise.resolve().then(() => { while(true){} }); return await sleep(1)`, childManager, catalog, { timeoutMs: 50 }),
+      'promise microtask timeout',
+    );
+  });
+
+  // 5. Basic computation - must return 2
   await test('Basic computation returns 2', async () => {
     const result = await execute(`return 1 + 1`, childManager, catalog);
     if (result.value !== 2) {
@@ -86,7 +93,7 @@ async function runTests(): Promise<void> {
     }
   });
 
-  // 6. Server proxy — errors gracefully when no server available
+  // 6. Server proxy - errors gracefully when no server available
   await test('Server proxy errors gracefully', async () => {
     await assertThrows(
       () => execute(`return await servers.nonexistent.call("some_tool", {limit:1})`, childManager, catalog),
@@ -94,7 +101,7 @@ async function runTests(): Promise<void> {
     );
   });
 
-  // 7. Code size limit — must reject
+  // 7. Code size limit - must reject
   await test('Code size limit enforced', async () => {
     const bigCode = 'x'.repeat(51 * 1024);
     await assertThrows(
@@ -103,7 +110,7 @@ async function runTests(): Promise<void> {
     );
   });
 
-  // 8. Prototype pollution — must not affect host
+  // 8. Prototype pollution - must not affect host
   await test('Prototype pollution blocked', async () => {
     // Object.prototype is sealed (not frozen) by lockPrototypes().
     // In strict mode, assigning new properties to a sealed object throws TypeError.
@@ -111,14 +118,14 @@ async function runTests(): Promise<void> {
     try {
       await execute(`Object.prototype.polluted = true`, childManager, catalog);
     } catch {
-      // Throwing is acceptable — means the protection worked
+      // Throwing is acceptable - means the protection worked
     }
     if ('polluted' in {}) {
       throw new Error('Prototype pollution escaped sandbox!');
     }
   });
 
-  // 9. eval() blocked — codeGeneration.strings:false makes eval throw EvalError
+  // 9. eval() blocked - codeGeneration.strings:false makes eval throw EvalError
   await test('eval() blocked', async () => {
     await assertThrows(
       () => execute(`return eval('1 + 1')`, childManager, catalog),
@@ -126,7 +133,7 @@ async function runTests(): Promise<void> {
     );
   });
 
-  // 10. Function constructor blocked — same codeGeneration.strings:false
+  // 10. Function constructor blocked - same codeGeneration.strings:false
   await test('Function constructor blocked', async () => {
     await assertThrows(
       () => execute(`return new Function('return 1')()`, childManager, catalog),
@@ -134,7 +141,14 @@ async function runTests(): Promise<void> {
     );
   });
 
-  // 11. SharedArrayBuffer not accessible — deleted from context
+  await test('setTimeout unavailable in sandbox', async () => {
+    const result = await execute(`return typeof setTimeout`, childManager, catalog);
+    if (result.value !== 'undefined') {
+      throw new Error(`setTimeout should not be available, got type: ${result.value}`);
+    }
+  });
+
+  // 11. SharedArrayBuffer not accessible - deleted from context
   await test('SharedArrayBuffer removed from context', async () => {
     const result = await execute(`return typeof SharedArrayBuffer`, childManager, catalog);
     if (result.value !== 'undefined') {
@@ -142,7 +156,7 @@ async function runTests(): Promise<void> {
     }
   });
 
-  // 12. WebAssembly not accessible — deleted from context
+  // 12. WebAssembly not accessible - deleted from context
   await test('WebAssembly removed from context', async () => {
     const result = await execute(`return typeof WebAssembly`, childManager, catalog);
     if (result.value !== 'undefined') {
@@ -168,13 +182,13 @@ async function runTests(): Promise<void> {
   // 11. Async/await works
   await test('Async/await works', async () => {
     const result = await execute(
-      `const p = new Promise(resolve => setTimeout(() => resolve(42), 10)); return await p`,
+      `await sleep(10); return 42`,
       childManager, catalog,
     );
     if (result.value !== 42) throw new Error(`Expected 42, got ${result.value}`);
   });
 
-  // 16. Output size cap — console output truncated at 10MB
+  // 16. Output size cap - console output truncated at 10MB
   await test('Console output truncated at 10MB', async () => {
     // Each line is ~1KB, 12000 lines > 10MB
     const result = await execute(
