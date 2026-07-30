@@ -17,6 +17,20 @@ interface TransportInternals {
   _process?: ChildProcess;
 }
 
+/**
+ * Resolve the child process behind a StdioClientTransport.
+ *
+ * The SDK exposes only `pid` and `stderr` publicly — there is no supported way
+ * to end the child's stdin, so we reach for the private `_process`. That field
+ * is an SDK internal: if a future release renames it this returns null and the
+ * caller falls back to signals. Renames are caught by the shape guard in
+ * __tests__/sdk-internals.test.ts rather than degrading silently in production.
+ */
+export function resolveChildProcess(transport: unknown): ChildProcess | null {
+  const proc = (transport as TransportInternals | null)?._process;
+  return proc ?? null;
+}
+
 export class McpClient {
   private client: Client | null = null;
   private transport: StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport | null = null;
@@ -36,7 +50,14 @@ export class McpClient {
     if (this.config.transport === 'http' && this.config.url) {
       // Remote HTTP (Streamable HTTP) transport
       if (this.config.oauth) {
-        this.authProvider = new FileOAuthProvider(this.config.name);
+        this.authProvider = new FileOAuthProvider(this.config.name, {
+          clientMetadataUrl: this.config.oauthClientMetadataUrl,
+          scope: this.config.oauthScope,
+        });
+        // Binds the loopback redirect listener on an OS-assigned port. Must
+        // happen before connect(), which reads redirectUrl to build the
+        // authorization URL.
+        await this.authProvider.prepare();
         this.transport = new StreamableHTTPClientTransport(
           new URL(this.config.url),
           { authProvider: this.authProvider }
@@ -81,9 +102,18 @@ export class McpClient {
         this.client = new Client({ name: 'metamcp', version: '1.0.0' });
         await this.client.connect(this.transport);
       } else {
+        // Not an auth failure — release any bound redirect listener so a failed
+        // connect cannot leave a socket holding the process open.
+        this.authProvider?.dispose();
         throw err;
       }
     }
+
+    // Connected. If the authorization flow ran, waitForCallback() already
+    // released the redirect listener; if cached tokens were enough, it was
+    // never used — release it either way (dispose is idempotent) so every
+    // successful OAuth connect doesn't leave a loopback socket open.
+    this.authProvider?.dispose();
   }
 
   /**
@@ -101,9 +131,14 @@ export class McpClient {
    */
   closeStdin(): boolean {
     if (this.isRemote || !this.transport) return false;
-    const internals = this.transport as unknown as TransportInternals;
-    const proc = internals._process;
-    if (!proc?.stdin) return false;
+    const proc = resolveChildProcess(this.transport);
+    if (!proc) {
+      log('warn', 'stdio transport internals unavailable — falling back to signal shutdown', {
+        server: this.config.name,
+      });
+      return false;
+    }
+    if (!proc.stdin) return false;
     try {
       proc.stdin.end();
       return true;

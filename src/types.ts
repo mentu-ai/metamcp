@@ -41,6 +41,14 @@ export interface ServerConfig {
   transport?: TransportType;
   headers?: Record<string, string>;
   oauth?: boolean;
+  /**
+   * HTTPS URL of a Client ID Metadata Document. Used as the client_id when the
+   * authorization server supports it, instead of Dynamic Client Registration
+   * (deprecated as of MCP 2026-07-28).
+   */
+  oauthClientMetadataUrl?: string;
+  /** Space-delimited OAuth scopes to request. */
+  oauthScope?: string;
   timeoutMs?: number;
   lifecycle?: ServerLifecycle;
   criticality: ServiceCriticality;

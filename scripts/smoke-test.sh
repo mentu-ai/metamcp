@@ -39,15 +39,19 @@ HEAD=$(head -c 20 dist/index.js)
 HELP_OUT=$(node dist/index.js --help 2>&1 || true)
 echo "$HELP_OUT" | grep 'metamcp' > /dev/null && check "--help prints usage" 1 || check "--help prints usage" 0
 
+# Read the expected version from package.json — hardcoding it here meant the
+# check asserted 0.2.0 long after the package had moved on.
+PKG_VERSION=$(node -p "require('./package.json').version")
 VERSION_OUT=$(node dist/index.js --version 2>&1 || true)
-echo "$VERSION_OUT" | grep '0.2.0' > /dev/null && check "--version prints 0.2.0" 1 || check "--version prints 0.2.0" 0
+echo "$VERSION_OUT" | grep "$PKG_VERSION" > /dev/null && check "--version prints $PKG_VERSION" 1 || check "--version prints $PKG_VERSION" 0
 
 # 3. JSON-RPC initialize (MCP stdio transport: newline-delimited JSON-RPC)
 TMPCONFIG=$(mktemp)
 TMPOUT=$(mktemp)
 echo '{"mcpServers":{}}' > "$TMPCONFIG"
 
-INIT_REQ='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"smoke-test","version":"0.1.0"}}}'
+PROTOCOL_VERSION=$(node -p "require('@modelcontextprotocol/sdk/types.js').LATEST_PROTOCOL_VERSION")
+INIT_REQ="{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"$PROTOCOL_VERSION\",\"capabilities\":{},\"clientInfo\":{\"name\":\"smoke-test\",\"version\":\"0.1.0\"}}}"
 
 # Server stays alive after stdin EOF, so background + kill after response
 ( echo "$INIT_REQ"; sleep 1 ) | node dist/index.js --config "$TMPCONFIG" > "$TMPOUT" 2>/dev/null &

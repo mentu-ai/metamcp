@@ -9,28 +9,88 @@
  * Subsequent runs: loads persisted tokens, SDK auto-refreshes if expired.
  */
 
-import { createServer } from 'node:http';
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, unlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { OAuthClientMetadata, OAuthClientInformationMixed, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
+import { LoopbackCallbackServer, generateState, stepUpScope, type AuthChallenge } from './oauth-hardening.js';
 
-const CALLBACK_PORT = 19890;
-const CALLBACK_TIMEOUT_MS = 120_000;
+export interface OAuthProviderOptions {
+  /**
+   * HTTPS URL of a Client ID Metadata Document. When the authorization server
+   * advertises `client_id_metadata_document_supported`, the SDK uses this as
+   * the client_id instead of registering dynamically — Dynamic Client
+   * Registration is deprecated as of MCP 2026-07-28.
+   */
+  clientMetadataUrl?: string;
+  /** Space-delimited scopes to request. Omitted entirely when unset. */
+  scope?: string;
+}
 
 export class FileOAuthProvider implements OAuthClientProvider {
   private readonly dir: string;
-  private callbackResolve: ((code: string) => void) | null = null;
+  private callback: LoopbackCallbackServer | null = null;
+  readonly clientMetadataUrl?: string;
+  /** Widened by step-up; persisted so it survives a reconnect. */
+  private scope?: string;
 
-  constructor(private readonly serverName: string) {
+  constructor(private readonly serverName: string, options: OAuthProviderOptions = {}) {
     this.dir = join(homedir(), '.metamcp', 'oauth', serverName);
     mkdirSync(this.dir, { recursive: true });
+    this.clientMetadataUrl = options.clientMetadataUrl;
+    // A scope granted by an earlier step-up outranks the configured baseline,
+    // otherwise every reconnect would drop back and step up again.
+    this.scope = this.readText('scope.txt') ?? options.scope;
+  }
+
+  /**
+   * Bind the loopback redirect listener. Must be awaited before the SDK reads
+   * `redirectUrl`, because the port is assigned by the OS rather than fixed.
+   */
+  async prepare(): Promise<void> {
+    if (!this.callback) this.callback = await LoopbackCallbackServer.start();
+  }
+
+  /**
+   * Release a redirect listener bound by prepare() without completing the
+   * flow. Safe to call repeatedly; leaving one bound keeps the process alive.
+   */
+  dispose(): void {
+    this.callback?.close();
+    this.callback = null;
+  }
+
+  /** Scope currently requested at authorization time. */
+  get requestedScope(): string | undefined {
+    return this.scope;
+  }
+
+  /**
+   * Handle an `insufficient_scope` challenge by widening the requested scope to
+   * the union of what we hold and what the server demanded, and dropping the
+   * current tokens so the next connect re-authorizes.
+   *
+   * Returns the new scope, or null when no step-up applies — the caller should
+   * surface the original error rather than retry, since re-authorizing with an
+   * unchanged scope would loop.
+   */
+  async stepUp(challenge: AuthChallenge): Promise<string | null> {
+    const widened = stepUpScope(this.scope, challenge);
+    if (widened === null) return null;
+    this.scope = widened;
+    writeFileSync(join(this.dir, 'scope.txt'), widened, { mode: 0o600 });
+    // The held token cannot gain a scope; force a fresh authorization.
+    await this.invalidateCredentials('tokens');
+    return widened;
   }
 
   get redirectUrl(): string {
-    return `http://127.0.0.1:${CALLBACK_PORT}/callback`;
+    if (!this.callback) {
+      throw new Error(`OAuth callback listener not started for ${this.serverName} — call prepare() first`);
+    }
+    return this.callback.redirectUrl;
   }
 
   get clientMetadata(): OAuthClientMetadata {
@@ -40,7 +100,19 @@ export class FileOAuthProvider implements OAuthClientProvider {
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
       token_endpoint_auth_method: 'client_secret_post',
+      ...(this.scope ? { scope: this.scope } : {}),
     };
+  }
+
+  /**
+   * CSRF state, persisted so the authorization response can be checked against
+   * the request that caused it. The SDK omits `state` entirely when a provider
+   * does not implement this.
+   */
+  async state(): Promise<string> {
+    const value = generateState();
+    writeFileSync(join(this.dir, 'state.txt'), value, { mode: 0o600 });
+    return value;
   }
 
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
@@ -83,11 +155,12 @@ export class FileOAuthProvider implements OAuthClientProvider {
 
   async invalidateCredentials(scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery'): Promise<void> {
     const targets: Record<string, string[]> = {
-      all: ['tokens.json', 'client-info.json', 'verifier.txt'],
+      all: ['tokens.json', 'client-info.json', 'verifier.txt', 'state.txt', 'issuer.txt', 'scope.txt'],
       client: ['client-info.json'],
       tokens: ['tokens.json'],
       verifier: ['verifier.txt'],
-      discovery: [],
+      // The pinned issuer is discovery state — re-pinned on the next flow.
+      discovery: ['issuer.txt'],
     };
     for (const file of targets[scope] ?? []) {
       const path = join(this.dir, file);
@@ -96,56 +169,42 @@ export class FileOAuthProvider implements OAuthClientProvider {
   }
 
   /**
-   * Start an ephemeral HTTP server to receive the OAuth callback.
-   * Resolves with the authorization code. Times out after 120s.
+   * Await the authorization callback and return the code.
+   *
+   * The response is rejected unless it echoes the `state` we sent (CSRF) and,
+   * when the authorization server identifies itself, carries the `iss` we
+   * pinned on the first successful authorization (RFC 9207).
    */
-  waitForCallback(): Promise<string> {
-    return new Promise<string>((resolve, reject) => {
-      this.callbackResolve = resolve;
-      const server = createServer((req, res) => {
-        if (!req.url || req.url === '/favicon.ico') {
-          res.writeHead(404);
-          res.end();
-          return;
-        }
-
-        const parsed = new URL(req.url, `http://127.0.0.1:${CALLBACK_PORT}`);
-        const code = parsed.searchParams.get('code');
-        const error = parsed.searchParams.get('error');
-
-        if (code) {
-          res.writeHead(200, { 'Content-Type': 'text/html' });
-          res.end('<html><body><h1>Authorized</h1><p>You can close this tab.</p><script>setTimeout(()=>window.close(),2000)</script></body></html>');
-          this.callbackResolve = null;
-          setTimeout(() => server.close(), 1000);
-          resolve(code);
-        } else {
-          const msg = error ?? 'No authorization code in callback';
-          res.writeHead(400, { 'Content-Type': 'text/html' });
-          res.end(`<html><body><h1>Error</h1><p>${msg}</p></body></html>`);
-          this.callbackResolve = null;
-          setTimeout(() => server.close(), 1000);
-          reject(new Error(`OAuth callback error: ${msg}`));
-        }
+  async waitForCallback(): Promise<string> {
+    if (!this.callback) {
+      throw new Error(`OAuth callback listener not started for ${this.serverName} — call prepare() first`);
+    }
+    try {
+      const { code, iss } = await this.callback.waitForCode({
+        expectedState: this.readText('state.txt'),
+        expectedIssuer: this.readText('issuer.txt'),
       });
-
-      server.listen(CALLBACK_PORT, '127.0.0.1');
-
-      server.on('error', (err) => {
-        reject(new Error(`OAuth callback server error: ${err.message}`));
-      });
-
-      setTimeout(() => {
-        if (this.callbackResolve) {
-          this.callbackResolve = null;
-          server.close();
-          reject(new Error(`OAuth authorization timed out after ${CALLBACK_TIMEOUT_MS / 1000}s for ${this.serverName}`));
-        }
-      }, CALLBACK_TIMEOUT_MS);
-    });
+      // Pin the issuer on first use so later flows are checked against it.
+      if (iss && !this.readText('issuer.txt')) {
+        writeFileSync(join(this.dir, 'issuer.txt'), iss, { mode: 0o600 });
+      }
+      return code;
+    } finally {
+      this.callback = null;
+      try { unlinkSync(join(this.dir, 'state.txt')); } catch { /* already gone */ }
+    }
   }
 
   // ─── Internal ────────────────────────────────────────────────────────────
+
+  private readText(filename: string): string | undefined {
+    try {
+      const value = readFileSync(join(this.dir, filename), 'utf-8').trim();
+      return value.length > 0 ? value : undefined;
+    } catch {
+      return undefined;
+    }
+  }
 
   private readJson<T>(filename: string): T | undefined {
     const path = join(this.dir, filename);

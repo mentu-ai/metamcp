@@ -3,6 +3,7 @@ import { resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { DualEraServerTransport, SUPPORTED_MODERN_PROTOCOL_VERSIONS } from './dual-era.js';
 import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
@@ -672,10 +673,20 @@ async function main() {
     cooldown: cliOptions.cooldown,
   });
 
-  const transport = new StdioServerTransport();
+  // Dual-era surface: legacy `initialize` clients are forwarded untouched to
+  // the handlers below; MCP 2026-07-28 clients get server/discover and
+  // stateless per-request handling. See src/dual-era.ts.
+  const transport = new DualEraServerTransport(new StdioServerTransport(), {
+    serverInfo: { name: 'metamcp', version: readPackageVersion() },
+    capabilities: { tools: {} },
+    log,
+  });
   await server.connect(transport);
 
-  log('info', 'server started', { transport: 'stdio' });
+  log('info', 'server started', {
+    transport: 'stdio',
+    eras: ['legacy', ...SUPPORTED_MODERN_PROTOCOL_VERSIONS],
+  });
 
   // Hot-reload: watch .mcp.json for changes (e.g. from `metamcp add`)
   // Uses dual strategy: watch file directly when it exists, poll as fallback.
