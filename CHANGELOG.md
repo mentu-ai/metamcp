@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.7.0
+
+Released 2026-07-30.
+
+- Added modern-era (MCP 2026-07-28) outbound calls to child servers. MetaMCP now probes `server/discover` before any handshake and drives children that support it with per-request `_meta` and no `initialize`; children that do not are unaffected and follow exactly the path they did before.
+- Added standards-based inbound authorization for the Streamable HTTP gateway: RFC 9728 protected-resource metadata served at its well-known path, RFC 8707 audience-validated JWT bearer tokens verified against the authorization server's JWKS, and `WWW-Authenticate` challenges that carry the metadata URL and any required scopes. Configure with `METAMCP_RESOURCE_URL` and `METAMCP_AUTH_ISSUER` (plus optional `METAMCP_AUTH_JWKS_URI`, `METAMCP_AUTH_REQUIRED_SCOPES`, `METAMCP_AUTH_SUPPORTED_SCOPES`).
+- Made the existing `METAMCP_HTTP_BEARER_TOKEN` comparison constant-time. That mode still works unchanged and remains the simplest option for a private deployment.
+- JWT signature verification pins algorithms server-side and refuses symmetric algorithms, since a JWKS key is public. `jose` is now a declared dependency.
+- Fixed: a successful OAuth connect using cached tokens left its loopback redirect listener open for the lifetime of the process.
+
 ## v0.6.0
 
 Released 2026-07-29.

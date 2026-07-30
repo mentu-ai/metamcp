@@ -1,28 +1,45 @@
-# MetaMCP v0.6.0
+# MetaMCP v0.7.0
 
-MetaMCP v0.6.0 brings the gateway onto the MCP 2026-07-28 spec: the stdio
-transport now serves both protocol eras on one endpoint, the OAuth client is
-hardened to the spec's authorization requirements, and the building blocks for
-standards-based inbound authorization ship ready to wire.
+MetaMCP v0.7.0 completes the MCP 2026-07-28 work in both directions. v0.6.0 made
+the gateway *serve* both protocol eras; this release makes it *speak* the modern
+era to the child servers that support it, and replaces the HTTP gateway's shared
+secret with standards-based authorization.
 
 ## Highlights
 
-- Dual-era stdio surface: modern clients get `server/discover`, per-request
-  `_meta` validation (`-32021`/`-32022`), and `resultType`/`serverInfo`/cache-hint
-  result envelopes; legacy `initialize` clients are untouched.
-- OAuth client hardening: CSRF `state`, RFC 9207 issuer validation with
-  first-use pinning, and additive step-up scope handling.
-- OS-assigned OAuth callback port replaces fixed 19890 — concurrent
-  authorizations no longer collide, and the listener never outlives the flow.
-- Client ID Metadata Document (`oauthClientMetadataUrl`) and `oauthScope`
-  config, with Dynamic Client Registration as the fallback.
-- Child-server era probing with per-server caching — see which children
-  already speak MCP 2026-07-28.
-- RFC 9728 / RFC 8707 inbound-authorization core (protected-resource metadata,
-  bearer challenges, audience validation), shipped inert for the HTTP gateway
-  to adopt.
-- SDK-internal `_process` access is now guarded and shape-tested, so an SDK
-  upgrade fails loudly instead of silently degrading graceful shutdown.
+- **Modern-era outbound.** Child servers are probed with `server/discover`
+  before any handshake — an `initialize` would commit the connection to the
+  legacy era — and those that support MCP 2026-07-28 are driven statelessly,
+  with per-request `_meta` and no handshake at all. Children that do not support
+  it follow exactly the path they did before.
+- **RFC 9728 protected-resource metadata.** Served at its well-known path so a
+  client with no token can discover where to authenticate.
+- **RFC 8707 audience validation.** JWT bearer tokens are signature-verified
+  against the authorization server's JWKS and checked to have been minted for
+  *this* resource, so a token issued for another service cannot be replayed here.
+- **`WWW-Authenticate` challenges** carrying the metadata URL and, on an
+  insufficient-scope rejection, the scopes actually needed.
+- **The shared-secret mode still works**, and its comparison is now
+  constant-time. It remains the simplest option for a private deployment.
+
+## Configuring gateway authorization
+
+Three exclusive modes, resolved from the environment at startup:
+
+| Mode | Set | Behaviour |
+|---|---|---|
+| oauth | `METAMCP_RESOURCE_URL` + `METAMCP_AUTH_ISSUER` | JWKS-verified, audience-validated bearer tokens; metadata document served |
+| static-token | `METAMCP_HTTP_BEARER_TOKEN` | Shared secret, compared in constant time |
+| open | neither | Unauthenticated, with a startup warning |
+
+Optional in oauth mode: `METAMCP_AUTH_JWKS_URI` (defaults to the issuer's
+conventional JWKS path), `METAMCP_AUTH_REQUIRED_SCOPES`,
+`METAMCP_AUTH_SUPPORTED_SCOPES`.
+
+The modes are deliberately not combinable — accepting a shared secret *or* a
+verified token would let the weaker credential define the endpoint's security —
+and a half-configured OAuth setup is refused at startup rather than silently
+downgraded.
 
 ## Validation
 
