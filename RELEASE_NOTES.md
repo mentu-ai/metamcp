@@ -1,16 +1,28 @@
-# MetaMCP v0.5.0
+# MetaMCP v0.6.0
 
-MetaMCP v0.5.0 adds the production GCP path: deploy MetaMCP as a Streamable HTTP MCP gateway on Cloud Run, register it with Google Agent Registry, consume it from Google ADK agents, and export hash-linked evidence for tool calls.
+MetaMCP v0.6.0 brings the gateway onto the MCP 2026-07-28 spec: the stdio
+transport now serves both protocol eras on one endpoint, the OAuth client is
+hardened to the spec's authorization requirements, and the building blocks for
+standards-based inbound authorization ship ready to wire.
 
 ## Highlights
 
-- Streamable HTTP server mode for Cloud Run with `/mcp` and `/healthz`.
-- Secret Manager, IAM, Cloud Build, Docker, Azure DevOps, and Agent Registry artifacts.
-- Python ADK sample using `AgentRegistry.get_mcp_toolset`.
-- Evidence export from `.metamcp/ledger.jsonl` to a verifiable hash-linked bundle.
-- Airtable MCP and Cotizera-style prompt regression fixtures.
-- Sandbox timeout hardening for infinite loops and promise microtasks.
-- CI coverage for HTTP transport, gateway auth, evidence export, and sandbox behavior.
+- Dual-era stdio surface: modern clients get `server/discover`, per-request
+  `_meta` validation (`-32021`/`-32022`), and `resultType`/`serverInfo`/cache-hint
+  result envelopes; legacy `initialize` clients are untouched.
+- OAuth client hardening: CSRF `state`, RFC 9207 issuer validation with
+  first-use pinning, and additive step-up scope handling.
+- OS-assigned OAuth callback port replaces fixed 19890 — concurrent
+  authorizations no longer collide, and the listener never outlives the flow.
+- Client ID Metadata Document (`oauthClientMetadataUrl`) and `oauthScope`
+  config, with Dynamic Client Registration as the fallback.
+- Child-server era probing with per-server caching — see which children
+  already speak MCP 2026-07-28.
+- RFC 9728 / RFC 8707 inbound-authorization core (protected-resource metadata,
+  bearer challenges, audience validation), shipped inert for the HTTP gateway
+  to adopt.
+- SDK-internal `_process` access is now guarded and shape-tested, so an SDK
+  upgrade fails loudly instead of silently degrading graceful shutdown.
 
 ## Validation
 
@@ -19,5 +31,4 @@ MetaMCP v0.5.0 adds the production GCP path: deploy MetaMCP as a Streamable HTTP
 - `npm run typecheck`
 - `npm test`
 - `scripts/smoke-test.sh`
-- `docker build -t metamcp:v0.5.0-smoke .`
 - `npm pack --dry-run`
