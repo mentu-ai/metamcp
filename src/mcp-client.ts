@@ -6,6 +6,12 @@ import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { Tool, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { ServerConfig, ToolDefinition } from './types.js';
 import { FileOAuthProvider } from './oauth-provider.js';
+import {
+  PreStartedTransport,
+  probeChildEra,
+  ModernMcpSession,
+  type ChildEra,
+} from './modern-client.js';
 import { log } from './log.js';
 import type { ChildProcess } from 'node:child_process';
 
@@ -31,8 +37,18 @@ export function resolveChildProcess(transport: unknown): ChildProcess | null {
   return proc ?? null;
 }
 
+/**
+ * Probe budget. A legacy child answers MethodNotFound immediately, so this only
+ * bounds a child that ignores unknown methods entirely — keep it short so such
+ * a child costs a moment, not a stall, on every connect.
+ */
+const ERA_PROBE_TIMEOUT_MS = 3000;
+
 export class McpClient {
   private client: Client | null = null;
+  /** Set when the child speaks MCP 2026-07-28; `client` stays null then. */
+  private modern: ModernMcpSession | null = null;
+  private era: ChildEra = 'legacy';
   private transport: StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport | null = null;
   readonly config: ServerConfig;
   private authProvider: FileOAuthProvider | null = null;
@@ -85,6 +101,36 @@ export class McpClient {
         } as Record<string, string>,
       });
     }
+
+    // Decide the protocol era before any handshake. `initialize` selects the
+    // legacy era per spec, so the probe has to come first; PreStartedTransport
+    // keeps the already-running transport reusable by the SDK client below.
+    const framed = new PreStartedTransport(this.transport);
+    await framed.start();
+    const probe = await probeChildEra(framed, { timeoutMs: ERA_PROBE_TIMEOUT_MS });
+    this.era = probe.era;
+
+    if (probe.era === 'modern') {
+      log('info', 'child speaks the modern era', {
+        server: this.config.name,
+        versions: probe.supportedVersions,
+      });
+      this.modern = new ModernMcpSession(framed, {
+        clientInfo: { name: 'metamcp', version: '1.0.0' },
+      });
+      this.transport = framed as unknown as typeof this.transport;
+      this.authProvider?.dispose();
+      return;
+    }
+
+    // Logged unconditionally: a clean MethodNotFound carries no `reason`, and
+    // leaving that case silent made it impossible to tell "negotiated legacy"
+    // apart from "never connected" when reading a live gateway's output.
+    log('info', 'child using the legacy era', {
+      server: this.config.name,
+      ...(probe.reason ? { reason: probe.reason } : {}),
+    });
+    this.transport = framed as unknown as typeof this.transport;
 
     this.client = new Client({
       name: 'metamcp',
@@ -154,10 +200,25 @@ export class McpClient {
    */
   detach(): void {
     this.client = null;
+    this.modern = null;
     this.transport = null;
   }
 
+  /** Protocol era negotiated with this child. */
+  get protocolEra(): ChildEra {
+    return this.era;
+  }
+
   async listTools(): Promise<ToolDefinition[]> {
+    if (this.modern) {
+      const tools = await this.modern.listTools();
+      return tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: (t.inputSchema ?? {}) as Record<string, unknown>,
+        server: this.config.name,
+      }));
+    }
     if (!this.client) throw new Error(`Not connected to ${this.config.name}`);
     const result = await this.client.listTools();
     return result.tools.map((t: Tool) => ({
@@ -169,6 +230,10 @@ export class McpClient {
   }
 
   async callTool(name: string, args?: Record<string, unknown>): Promise<CallToolResult> {
+    if (this.modern) {
+      const result = await this.modern.callTool(name, args, this.config.timeoutMs ?? 60_000);
+      return result as unknown as CallToolResult;
+    }
     if (!this.client) throw new Error(`Not connected to ${this.config.name}`);
     const result = await this.client.callTool(
       { name, arguments: args },

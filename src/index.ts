@@ -7,6 +7,14 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { DualEraServerTransport, SUPPORTED_MODERN_PROTOCOL_VERSIONS } from './dual-era.js';
 import {
+  resolveGatewayAuth,
+  createGatewayVerifier,
+  gatewayMetadataPath,
+  gatewayMetadataDocument,
+  authorizeGatewayRequest,
+  type GatewayAuthEnv,
+} from './gateway-auth.js';
+import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
@@ -836,6 +844,30 @@ async function main() {
 }
 
 async function startHttpTransport(): Promise<() => Promise<void>> {
+  // Resolve the auth posture once, at startup: a misconfiguration should stop
+  // the server coming up, not surface as a per-request 500.
+  const authConfig = resolveGatewayAuth(process.env as GatewayAuthEnv);
+  const authVerifier = createGatewayVerifier(authConfig);
+  const metadataPath = gatewayMetadataPath(authConfig);
+  log('info', 'gateway authorization', {
+    mode: authConfig.mode,
+    ...(authConfig.issuer ? { issuer: authConfig.issuer } : {}),
+    ...(metadataPath ? { protectedResourceMetadata: metadataPath } : {}),
+    ...(authConfig.requiredScopes.length > 0 ? { requiredScopes: authConfig.requiredScopes } : {}),
+  });
+  if (authConfig.mode === 'open') {
+    log('warn', 'gateway is unauthenticated — set METAMCP_RESOURCE_URL + METAMCP_AUTH_ISSUER for OAuth, or METAMCP_HTTP_BEARER_TOKEN for a shared secret');
+  }
+  // The resource identifier need not equal the path we serve MCP on, but a
+  // mismatch is far more often a typo than an intent — and it produces tokens
+  // whose audience names an endpoint that does not exist here.
+  if (authConfig.resourceUrl && authConfig.resourceUrl.pathname !== cliOptions.httpPath) {
+    log('warn', 'METAMCP_RESOURCE_URL path does not match the MCP path — clients will request tokens for a different audience than this endpoint serves', {
+      resourcePath: authConfig.resourceUrl.pathname,
+      httpPath: cliOptions.httpPath,
+    });
+  }
+
   const httpServer = createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
@@ -849,13 +881,37 @@ async function startHttpTransport(): Promise<() => Promise<void>> {
         return;
       }
 
+      // RFC 9728: served unauthenticated by design — it is the document a
+      // client reads precisely because it does not yet have a token.
+      if (metadataPath && url.pathname === metadataPath) {
+        if (req.method !== 'GET' && req.method !== 'HEAD') {
+          res.statusCode = 405;
+          res.setHeader('Allow', 'GET, HEAD');
+          res.end('Method Not Allowed');
+          return;
+        }
+        sendJson(res, 200, gatewayMetadataDocument(authConfig));
+        return;
+      }
+
       if (url.pathname !== cliOptions.httpPath) {
         sendJson(res, 404, { error: 'not_found' });
         return;
       }
 
-      if (!isAuthorized(req)) {
-        sendJson(res, 401, { error: 'unauthorized' });
+      const decision = await authorizeGatewayRequest(
+        authConfig,
+        req.headers as { authorization?: string; 'x-metamcp-token'?: string },
+        authVerifier,
+      );
+      if (!decision.ok) {
+        // The challenge carries the metadata URL and any required scopes, so a
+        // client can discover where to authenticate instead of guessing.
+        if (decision.challenge) res.setHeader('WWW-Authenticate', decision.challenge);
+        sendJson(res, decision.status ?? 401, {
+          error: decision.error ?? 'unauthorized',
+          ...(decision.errorDescription ? { error_description: decision.errorDescription } : {}),
+        });
         return;
       }
 
@@ -934,11 +990,6 @@ async function handleStatelessMcpPost(req: IncomingMessage, res: ServerResponse)
   if (res.writableEnded) await closeRequestServer();
 }
 
-function isAuthorized(req: IncomingMessage): boolean {
-  const token = process.env.METAMCP_HTTP_BEARER_TOKEN;
-  if (!token) return true;
-  return req.headers.authorization === `Bearer ${token}` || req.headers['x-metamcp-token'] === token;
-}
 
 function sendJson(res: ServerResponse, status: number, payload: unknown): void {
   res.statusCode = status;
