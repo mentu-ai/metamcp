@@ -1,8 +1,8 @@
 /**
- * Evidence Mode — structured investigation tracking.
+ * Evidence Mode - structured investigation tracking.
  *
  * Typed records with confidence scoring, gap tracking, and session scoping.
- * Sits on top of ledger.ts (telemetry) — this is structured evidence, not raw logs.
+ * Sits on top of ledger.ts (telemetry) - this is structured evidence, not raw logs.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -22,7 +22,7 @@ export interface ToolCallEvidence {
   server: string;
   tool: string;
   input: Record<string, unknown>;
-  outputSummary: string;     // compressed result (context isolation — not raw output)
+  outputSummary: string;     // compressed result (context isolation - not raw output)
   durationMs: number;
   success: boolean;
   confidence: number;

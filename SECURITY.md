@@ -19,10 +19,10 @@ We will acknowledge your report within 48 hours and provide a timeline for a fix
 
 MetaMCP has a security-sensitive architecture. The following areas are in scope:
 
-- **V8 sandbox escape** — any code that breaks out of the `mcp_execute` sandbox (`vm.Context` isolation, prototype freezing, `eval`/`Function` constructor blocking)
-- **Child process injection** — command injection via `.mcp.json` config entries, argument manipulation, or environment variable leakage
-- **Trust policy bypass** — circumventing the trust evaluation for auto-provisioning npm registry packages
-- **Connection pool state corruption** — manipulating the circuit breaker, idle sweep, or pool bounds to cause denial of service
+- **V8 sandbox escape** - any code that breaks out of the `mcp_execute` sandbox (`vm.Context` isolation, prototype freezing, `eval`/`Function` constructor blocking)
+- **Child process injection** - command injection via `.mcp.json` config entries, argument manipulation, or environment variable leakage
+- **Trust policy bypass** - circumventing the trust evaluation for auto-provisioning npm registry packages
+- **Connection pool state corruption** - manipulating the circuit breaker, idle sweep, or pool bounds to cause denial of service
 
 ## Out of Scope
 

@@ -26,7 +26,7 @@ export class CircuitBreaker {
     }
   }
 
-  /** Record success. Resets failure counter to zero immediately — no hysteresis. */
+  /** Record success. Resets failure counter to zero immediately - no hysteresis. */
   recordSuccess(): void {
     this.consecutiveFailures = 0;
     if (this.tripped) {
@@ -41,7 +41,7 @@ export class CircuitBreaker {
     return elapsed <= this.cooldownMs;
   }
 
-  /** Full reset — clear all state. */
+  /** Full reset - clear all state. */
   reset(): void {
     this.consecutiveFailures = 0;
     this.failedAt = 0;

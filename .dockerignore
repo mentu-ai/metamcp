@@ -1,0 +1,11 @@
+node_modules
+dist
+.metamcp
+.mentu
+.mcp.json
+.env
+.env.*
+*.mp4
+*.cast
+.DS_Store
+npm-debug.log*

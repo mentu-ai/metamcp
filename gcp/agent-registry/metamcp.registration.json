@@ -1,0 +1,14 @@
+{
+  "serviceName": "metamcp-gateway",
+  "displayName": "MetaMCP Cloud Run Gateway",
+  "location": "global",
+  "mcpServerSpecType": "tool-spec",
+  "mcpServerSpecContent": "gcp/agent-registry/toolspec.json",
+  "interfaces": [
+    {
+      "url": "https://YOUR-CLOUD-RUN-SERVICE.run.app/mcp",
+      "protocolBinding": "JSONRPC"
+    }
+  ],
+  "gcloud": "gcloud alpha agent-registry services create metamcp-gateway --project PROJECT_ID --location global --display-name \"MetaMCP Cloud Run Gateway\" --mcp-server-spec-type tool-spec --mcp-server-spec-content gcp/agent-registry/toolspec.json --interfaces url=SERVER_URL,protocolBinding=JSONRPC"
+}

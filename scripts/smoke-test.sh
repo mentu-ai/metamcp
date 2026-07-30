@@ -1,14 +1,20 @@
 #!/bin/bash
-# Smoke test: verify MetaMCP server handles JSON-RPC initialize, --help, --version
+# Smoke test: verify CLI flags, stdio MCP, and Streamable HTTP MCP.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
 
-TMPCONFIG=""
-TMPOUT=""
-cleanup() { rm -f "$TMPCONFIG" "$TMPOUT"; }
+TMPDIR_PATH=""
+HTTP_PID=""
+AUTH_HTTP_PID=""
+
+cleanup() {
+  if [ -n "$HTTP_PID" ]; then kill "$HTTP_PID" 2>/dev/null || true; fi
+  if [ -n "$AUTH_HTTP_PID" ]; then kill "$AUTH_HTTP_PID" 2>/dev/null || true; fi
+  if [ -n "$TMPDIR_PATH" ]; then rm -rf "$TMPDIR_PATH"; fi
+}
 trap cleanup EXIT
 
 PASS=0
@@ -25,52 +31,113 @@ check() {
   fi
 }
 
-# Ensure build exists
+free_port() {
+  node -e "const net=require('node:net');const s=net.createServer();s.listen(0,'127.0.0.1',()=>{console.log(s.address().port);s.close();});"
+}
+
+wait_for_health() {
+  local base_url="$1"
+  local err_file="$2"
+  for _ in $(seq 1 100); do
+    if curl -fsS "$base_url/healthz" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "HTTP server did not become healthy" >&2
+  cat "$err_file" >&2 || true
+  return 1
+}
+
+mcp_post() {
+  local base_url="$1"
+  local body="$2"
+  local out_file="$3"
+  shift 3
+  curl -sS -o "$out_file" -w "%{http_code}" \
+    -X POST "$base_url/mcp" \
+    -H "content-type: application/json" \
+    -H "accept: application/json, text/event-stream" \
+    "$@" \
+    -d "$body"
+}
+
 if [ ! -f dist/index.js ]; then
-  echo "FAIL: dist/index.js not found — run 'npm run build' first" >&2
+  echo "FAIL: dist/index.js not found. Run 'npm run build' first" >&2
   exit 1
 fi
 
-# 1. Verify shebang
-HEAD=$(head -c 20 dist/index.js)
+TMPDIR_PATH="$(mktemp -d)"
+CONFIG_FILE="$TMPDIR_PATH/mcp.json"
+STDIO_OUT="$TMPDIR_PATH/stdio.out"
+HTTP_OUT="$TMPDIR_PATH/http.out"
+HTTP_ERR="$TMPDIR_PATH/http.err"
+AUTH_HTTP_ERR="$TMPDIR_PATH/auth-http.err"
+HTTP_BODY="$TMPDIR_PATH/http-body.json"
+
+printf '{"mcpServers":{}}\n' > "$CONFIG_FILE"
+
+HEAD="$(head -c 20 dist/index.js)"
 [[ "$HEAD" == "#!/usr/bin/env node"* ]] && check "shebang present" 1 || check "shebang present" 0
 
-# 2. CLI flags
-HELP_OUT=$(node dist/index.js --help 2>&1 || true)
-echo "$HELP_OUT" | grep 'metamcp' > /dev/null && check "--help prints usage" 1 || check "--help prints usage" 0
+HELP_OUT="$(node dist/index.js --help 2>&1 || true)"
+echo "$HELP_OUT" | grep 'metamcp' >/dev/null && check "--help prints usage" 1 || check "--help prints usage" 0
 
-# Read the expected version from package.json — hardcoding it here meant the
-# check asserted 0.2.0 long after the package had moved on.
-PKG_VERSION=$(node -p "require('./package.json').version")
-VERSION_OUT=$(node dist/index.js --version 2>&1 || true)
-echo "$VERSION_OUT" | grep "$PKG_VERSION" > /dev/null && check "--version prints $PKG_VERSION" 1 || check "--version prints $PKG_VERSION" 0
+EXPECTED_VERSION="$(node -p "require('./package.json').version")"
+VERSION_OUT="$(node dist/index.js --version 2>&1 || true)"
+echo "$VERSION_OUT" | grep "$EXPECTED_VERSION" >/dev/null && check "--version prints package version" 1 || check "--version prints package version" 0
 
-# 3. JSON-RPC initialize (MCP stdio transport: newline-delimited JSON-RPC)
-TMPCONFIG=$(mktemp)
-TMPOUT=$(mktemp)
-echo '{"mcpServers":{}}' > "$TMPCONFIG"
-
-PROTOCOL_VERSION=$(node -p "require('@modelcontextprotocol/sdk/types.js').LATEST_PROTOCOL_VERSION")
+# Derive the protocol version from the SDK instead of hardcoding one that
+# will silently age out of the supported list.
+PROTOCOL_VERSION="$(node -p "require('@modelcontextprotocol/sdk/types.js').LATEST_PROTOCOL_VERSION")"
 INIT_REQ="{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"$PROTOCOL_VERSION\",\"capabilities\":{},\"clientInfo\":{\"name\":\"smoke-test\",\"version\":\"0.1.0\"}}}"
 
-# Server stays alive after stdin EOF, so background + kill after response
-( echo "$INIT_REQ"; sleep 1 ) | node dist/index.js --config "$TMPCONFIG" > "$TMPOUT" 2>/dev/null &
-SERVER_PID=$!
+( echo "$INIT_REQ"; sleep 1 ) | node dist/index.js --config "$CONFIG_FILE" > "$STDIO_OUT" 2>/dev/null &
+STDIO_PID=$!
 sleep 3
-kill "$SERVER_PID" 2>/dev/null || true
-wait "$SERVER_PID" 2>/dev/null || true
+kill "$STDIO_PID" 2>/dev/null || true
+wait "$STDIO_PID" 2>/dev/null || true
 
-RESPONSE=$(cat "$TMPOUT")
-
-if [ -n "$RESPONSE" ]; then
-  echo "$RESPONSE" | grep '"jsonrpc"' > /dev/null && check "JSON-RPC response valid" 1 || check "JSON-RPC response valid" 0
-  echo "$RESPONSE" | grep '"serverInfo"' > /dev/null && check "response contains serverInfo" 1 || check "response contains serverInfo" 0
-  echo "$RESPONSE" | grep '"metamcp"' > /dev/null && check "serverInfo.name is metamcp" 1 || check "serverInfo.name is metamcp" 0
+if [ -s "$STDIO_OUT" ]; then
+  grep '"jsonrpc"' "$STDIO_OUT" >/dev/null && check "stdio JSON-RPC response valid" 1 || check "stdio JSON-RPC response valid" 0
+  grep '"serverInfo"' "$STDIO_OUT" >/dev/null && check "stdio response contains serverInfo" 1 || check "stdio response contains serverInfo" 0
+  grep '"metamcp"' "$STDIO_OUT" >/dev/null && check "stdio serverInfo.name is metamcp" 1 || check "stdio serverInfo.name is metamcp" 0
 else
-  check "server returned a response" 0
+  check "stdio server returned a response" 0
 fi
 
-# Summary
+HTTP_PORT="$(free_port)"
+HTTP_URL="http://127.0.0.1:$HTTP_PORT"
+node dist/index.js --transport http --host 127.0.0.1 --port "$HTTP_PORT" --config "$CONFIG_FILE" > /dev/null 2>"$HTTP_ERR" &
+HTTP_PID=$!
+wait_for_health "$HTTP_URL" "$HTTP_ERR" && check "HTTP healthz is ready" 1 || check "HTTP healthz is ready" 0
+
+HTTP_INIT_STATUS="$(mcp_post "$HTTP_URL" "$INIT_REQ" "$HTTP_BODY")"
+[ "$HTTP_INIT_STATUS" = "200" ] && check "HTTP initialize returns 200" 1 || check "HTTP initialize returns 200" 0
+node -e "const r=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')); if (r.result.serverInfo.name !== 'metamcp') process.exit(1)" "$HTTP_BODY" \
+  && check "HTTP initialize returns serverInfo" 1 || check "HTTP initialize returns serverInfo" 0
+
+TOOLS_REQ='{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+HTTP_TOOLS_STATUS="$(mcp_post "$HTTP_URL" "$TOOLS_REQ" "$HTTP_BODY")"
+[ "$HTTP_TOOLS_STATUS" = "200" ] && check "HTTP tools/list returns 200" 1 || check "HTTP tools/list returns 200" 0
+node -e "const r=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')); if (r.result.tools.length !== 6) process.exit(1)" "$HTTP_BODY" \
+  && check "HTTP tools/list returns six tools" 1 || check "HTTP tools/list returns six tools" 0
+
+AUTH_PORT="$(free_port)"
+AUTH_URL="http://127.0.0.1:$AUTH_PORT"
+METAMCP_HTTP_BEARER_TOKEN="smoke-token" node dist/index.js --transport http --host 127.0.0.1 --port "$AUTH_PORT" --config "$CONFIG_FILE" > /dev/null 2>"$AUTH_HTTP_ERR" &
+AUTH_HTTP_PID=$!
+wait_for_health "$AUTH_URL" "$AUTH_HTTP_ERR" && check "auth HTTP healthz is ready" 1 || check "auth HTTP healthz is ready" 0
+
+NO_AUTH_STATUS="$(mcp_post "$AUTH_URL" "$TOOLS_REQ" "$HTTP_BODY")"
+[ "$NO_AUTH_STATUS" = "401" ] && check "HTTP tokenless request returns 401" 1 || check "HTTP tokenless request returns 401" 0
+
+AUTH_STATUS="$(mcp_post "$AUTH_URL" "$TOOLS_REQ" "$HTTP_BODY" -H "authorization: Bearer smoke-token")"
+[ "$AUTH_STATUS" = "200" ] && check "HTTP Authorization bearer accepted" 1 || check "HTTP Authorization bearer accepted" 0
+
+X_TOKEN_STATUS="$(mcp_post "$AUTH_URL" "$TOOLS_REQ" "$HTTP_BODY" -H "x-metamcp-token: smoke-token")"
+[ "$X_TOKEN_STATUS" = "200" ] && check "HTTP X-MetaMCP-Token accepted" 1 || check "HTTP X-MetaMCP-Token accepted" 0
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] && echo "Smoke test passed" || { echo "Smoke test FAILED" >&2; exit 1; }

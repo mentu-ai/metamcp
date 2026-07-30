@@ -125,7 +125,7 @@ export class McpClient {
   }
 
   /**
-   * Close stdin pipe to child — signals no more input.
+   * Close stdin pipe to child - signals no more input.
    * Returns true if stdin was successfully ended, false if fallback to kill is needed.
    * No-op for remote servers (returns false to skip PID-based shutdown).
    */

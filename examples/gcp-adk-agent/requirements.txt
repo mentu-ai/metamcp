@@ -1,0 +1,2 @@
+google-adk[agent-identity]>=1.18.0
+google-auth>=2.0.0

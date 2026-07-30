@@ -20,6 +20,39 @@ LLM ──► MetaMCP ────────┼─── fetch (3 tools)
                         └─── ... N more servers
 ```
 
+## Cloud Run + Agent Registry Gateway
+
+Deploy MetaMCP as a governed Cloud Run MCP gateway, register it with Google Agent Registry, and consume it from Google ADK agents with Mentu evidence for every tool call.
+
+The production path is:
+
+1. Turn 100 MCP tools into 6 MetaMCP gateway tools.
+2. Run the gateway over Streamable HTTP on Cloud Run.
+3. Mount child MCP configuration and bearer credentials from Secret Manager.
+4. Register the gateway as an external MCP server in Agent Registry.
+5. Resolve it from a Python ADK agent with `AgentRegistry.get_mcp_toolset`.
+6. Export `.metamcp/ledger.jsonl` as a hash-linked evidence bundle.
+
+```bash
+# 1. Configure Secret Manager and the Cloud Run service account.
+PROJECT_ID="your-project-id" scripts/gcp/setup-secrets.sh
+
+# 2. Build and deploy MetaMCP to Cloud Run.
+PROJECT_ID="your-project-id" scripts/gcp/deploy-cloud-run.sh
+
+# Include INVOKER_MEMBER when an ADK runtime should call the private gateway.
+PROJECT_ID="your-project-id" \
+INVOKER_MEMBER="serviceAccount:metamcp-adk-agent@your-project-id.iam.gserviceaccount.com" \
+scripts/gcp/deploy-cloud-run.sh
+
+# 3. Register the deployed /mcp endpoint with Agent Registry.
+PROJECT_ID="your-project-id" scripts/gcp/register-agent-registry.sh
+```
+
+The Agent Registry tool spec lives in `gcp/agent-registry/toolspec.json`, the ADK consumer sample lives in `examples/gcp-adk-agent`, and CI/CD examples are available for Cloud Build and Azure DevOps.
+
+By default the Cloud Run service is deployed with `--no-allow-unauthenticated`. The ADK sample can send a Cloud Run identity token in `X-Serverless-Authorization` and the MetaMCP gateway token in `Authorization`.
+
 ## Why MetaMCP?
 
 Every MCP server you add registers its tool schemas with the LLM. Each schema eats context tokens. At 5 servers with 20 tools each, that's ~15,000 tokens spent on schemas alone -- every single request.
@@ -33,7 +66,7 @@ Beyond token savings, MetaMCP handles the things you shouldn't have to think abo
 **Install and run:**
 
 ```bash
-npx @mentu/metamcp              # run directly (no install)
+npx @mentu/metamcp@0.5.0        # run directly (no install)
 npm install -g @mentu/metamcp    # or install globally
 ```
 
@@ -69,10 +102,18 @@ metamcp add --category search                    # filter by category
 ```
 
 ```bash
-npx @mentu/metamcp --config .mcp.json
+metamcp --config .mcp.json
 ```
 
-That's it. MetaMCP speaks MCP over stdio -- point any MCP client at it.
+That's it. MetaMCP speaks MCP over stdio for local clients and Streamable HTTP for remote clients such as Cloud Run.
+
+**Run remote HTTP mode locally:**
+
+```bash
+npm run build
+METAMCP_TRANSPORT=http METAMCP_CONFIG=.mcp.json PORT=8080 npm start
+curl http://localhost:8080/healthz
+```
 
 > **Note:** MetaMCP optionally uses `better-sqlite3` for semantic search. This requires a C++ compiler. If compilation fails, MetaMCP still works with keyword-only search. On macOS: `xcode-select --install`. On Linux: `apt install build-essential`.
 
@@ -158,6 +199,17 @@ These skills teach agents how to use these servers effectively.
 ```
 
 See the full gallery at [metamcp.org/guides/server-gallery](https://metamcp.org/guides/server-gallery).
+
+## Evidence Export
+
+MetaMCP records tool activity in `.metamcp/ledger.jsonl`. You can export that append-only ledger into a hash-linked evidence bundle:
+
+```bash
+metamcp export-evidence --ledger .metamcp/ledger.jsonl --out .metamcp/evidence-bundle.json
+metamcp export-evidence --out .metamcp/evidence-bundle.json --verify
+```
+
+The bundle schema is `io.mentu.metamcp.evidence-bundle.v1`. Each entry includes the original ledger event, its previous hash, and its current SHA-256 hash so later systems can verify continuity.
 
 ## Configuration
 
@@ -249,17 +301,17 @@ Hard-coding `API_KEY` strings in `.mcp.json` is the easiest way to leak credenti
 
 Resolution order for each `${KEY}`:
 
-1. **`mentu vault`** — if [mentu-vault](https://github.com/mentu-ai/mentu-vault) is installed at `~/.local/bin/mentu-vault`, MetaMCP looks up the key in the macOS Keychain (or the age-encrypted file fallback). Workspace-scoped lookup is tried first when `MENTU_WORKSPACE` is set, then global.
-2. **`process.env`** — standard environment variable.
-3. **Literal** — if neither resolves, MetaMCP logs a warning and leaves the `${KEY}` reference in place so misconfiguration is visible instead of silent.
+1. **`mentu vault`** - if [mentu-vault](https://github.com/mentu-ai/mentu-vault) is installed at `~/.local/bin/mentu-vault`, MetaMCP looks up the key in the macOS Keychain (or the age-encrypted file fallback). Workspace-scoped lookup is tried first when `MENTU_WORKSPACE` is set, then global.
+2. **`process.env`** - standard environment variable.
+3. **Literal** - if neither resolves, MetaMCP logs a warning and leaves the `${KEY}` reference in place so misconfiguration is visible instead of silent.
 
 Vault lookups are cached for the process lifetime, so resolution happens once at startup with no per-connection overhead. Inline references like `"Bearer ${TOKEN}"` and standalone `"${TOKEN}"` are both supported.
 
-If you do not use `mentu vault`, MetaMCP falls back to `process.env` automatically — no extra config needed. Just `export GITHUB_TOKEN=...` and the same `.mcp.json` works.
+If you do not use `mentu vault`, MetaMCP falls back to `process.env` automatically - no extra config needed. Just `export GITHUB_TOKEN=...` and the same `.mcp.json` works.
 
 ### Secret scrubbing on the way out
 
-MetaMCP also runs an output scrubber on every tool response before it returns to the LLM. JWTs, OpenAI/GitHub/Slack/AWS tokens, and JSON-shaped credential keys (`password`, `secret`, `api_key`, `access_token`, `private_key`, `authorization`, etc.) are replaced with `[REDACTED:LABEL]`. This is best-effort defense in depth — secrets that match well-known patterns get caught even if a misconfigured downstream server echoes them in an error message.
+MetaMCP also runs an output scrubber on every tool response before it returns to the LLM. JWTs, OpenAI/GitHub/Slack/AWS tokens, and JSON-shaped credential keys (`password`, `secret`, `api_key`, `access_token`, `private_key`, `authorization`, etc.) are replaced with `[REDACTED:LABEL]`. This is best-effort defense in depth - secrets that match well-known patterns get caught even if a misconfigured downstream server echoes them in an error message.
 
 ## What MetaMCP handles for you
 

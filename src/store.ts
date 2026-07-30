@@ -3,7 +3,7 @@
  *
  * Lifecycle: new → get(key) → lazy_load → cache → startCleanup → cleanup
  *
- * JS is single-threaded — no locks needed. Async get() serializes loads
+ * JS is single-threaded - no locks needed. Async get() serializes loads
  * via the event loop. setInterval handles periodic cleanup.
  */
 
@@ -29,7 +29,7 @@ export class Store<K, V> {
   private retentionWindowMs: number | null;
 
   /**
-   * In-flight load promises — singleton pattern.
+   * In-flight load promises - singleton pattern.
    * Prevents concurrent callers from triggering duplicate loads for the same key.
    */
   private pendingLoads = new Map<K, Promise<V>>();
@@ -57,7 +57,7 @@ export class Store<K, V> {
 
     try {
       const value = await promise;
-      // Cache only on success — loader errors must not corrupt cache
+      // Cache only on success - loader errors must not corrupt cache
       this.set(key, value);
       return value;
     } finally {

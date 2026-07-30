@@ -16,7 +16,7 @@ export class TrustPolicy {
   }
 
   /**
-   * NON-NEGOTIABLE trust enforcement — two independent gates, BOTH must pass:
+   * NON-NEGOTIABLE trust enforcement - two independent gates, BOTH must pass:
    *
    * 1. Namespace Trust: Is the package namespace in trusted-servers.json?
    * 2. Semantic Confidence: Does the match score >= 0.9?
@@ -83,7 +83,7 @@ export class TrustPolicy {
         this.allowlist = parsed.filter((e): e is string => typeof e === 'string');
       }
     } catch {
-      // No trust file — empty allowlist (deny all auto-provision)
+      // No trust file - empty allowlist (deny all auto-provision)
       this.allowlist = [];
     }
   }

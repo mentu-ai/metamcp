@@ -28,7 +28,7 @@ export function loadConfig(configPath?: string): ServerConfig[] {
   } catch {
     const example = resolve(process.cwd(), '.mcp.example.json');
     if (existsSync(example)) {
-      log('warn', '.mcp.json not found — copy .mcp.example.json to .mcp.json and edit it');
+      log('warn', '.mcp.json not found - copy .mcp.example.json to .mcp.json and edit it');
     }
     return [];
   }

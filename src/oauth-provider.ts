@@ -3,7 +3,7 @@
  *
  * Implements the MCP SDK's OAuthClientProvider interface with persistent
  * token storage at ~/.metamcp/oauth/<server>/. The SDK handles the full
- * OAuth 2.0 flow — this provider supplies storage and browser redirect.
+ * OAuth 2.0 flow - this provider supplies storage and browser redirect.
  *
  * First run: opens browser for user consent, receives callback, stores tokens.
  * Subsequent runs: loads persisted tokens, SDK auto-refreshes if expired.

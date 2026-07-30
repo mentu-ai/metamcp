@@ -44,7 +44,7 @@ const DEFAULT_CONFIG: ElicitationConfig = {
  * Handles MCP elicitation requests from child servers.
  *
  * - auto mode: respond using defaults from schema or autoResponses config
- * - interactive mode: forward to the MetaMCP client (not yet wired — logs and denies)
+ * - interactive mode: forward to the MetaMCP client (not yet wired - logs and denies)
  * - deny mode: always cancel
  */
 export class ElicitationHandler {
@@ -95,7 +95,7 @@ export class ElicitationHandler {
         } else if (!def.required) {
           // Skip optional fields with no default
         } else {
-          // Required field with no default — can't auto-respond
+          // Required field with no default - can't auto-respond
           log('warn', 'elicitation auto-respond missing required field', {
             server,
             field,
@@ -119,16 +119,16 @@ export class ElicitationHandler {
     // Store for potential future interactive forwarding
     this.pending.set(request.requestId, request);
 
-    // For now, log the request and dismiss — interactive forwarding
+    // For now, log the request and dismiss - interactive forwarding
     // requires a bidirectional channel to the MetaMCP client, which
     // stdio transport doesn't support for server-initiated requests.
-    log('warn', 'elicitation interactive mode not yet forwarded — dismissing', {
+    log('warn', 'elicitation interactive mode not yet forwarded - dismissing', {
       requestId: request.requestId,
       message: request.message,
     });
 
     this.pending.delete(request.requestId);
-    // Dismiss with a visible log — not silent. The warn log above ensures
+    // Dismiss with a visible log - not silent. The warn log above ensures
     // the operator knows interactive mode is non-functional.
     return { requestId: request.requestId, action: 'dismiss' };
   }

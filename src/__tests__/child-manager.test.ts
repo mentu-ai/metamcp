@@ -5,10 +5,10 @@
  * Import from .js extensions, run from dist/.
  *
  * Test groups:
- * 1. State Machine — canTransition() valid/invalid transitions
- * 2. Circuit Breaker — threshold, trip, cooldown, reset
- * 3. LIFO Idle List — ordering, eviction from tail
- * 4. Pool Bounds — upper bound enforcement, minimum detection
+ * 1. State Machine - canTransition() valid/invalid transitions
+ * 2. Circuit Breaker - threshold, trip, cooldown, reset
+ * 3. LIFO Idle List - ordering, eviction from tail
+ * 4. Pool Bounds - upper bound enforcement, minimum detection
  */
 
 import { ConnectionState, canTransition } from '../types.js';
@@ -29,7 +29,7 @@ function test(name: string, fn: () => void): void {
     failed++;
     const msg = err instanceof Error ? err.message : String(err);
     failures.push(`${name}: ${msg}`);
-    console.log(`  FAIL: ${name} — ${msg}`);
+    console.log(`  FAIL: ${name} - ${msg}`);
   }
 }
 
@@ -81,7 +81,7 @@ const invalidTransitions: [ConnectionState, ConnectionState][] = [
   [ConnectionState.ACTIVE, ConnectionState.CONNECTING], // can't reconnect while active
   [ConnectionState.FAILED, ConnectionState.ACTIVE],     // must reconnect first
   [ConnectionState.FAILED, ConnectionState.IDLE],       // must reconnect first
-  [ConnectionState.CLOSED, ConnectionState.IDLE],       // terminal — no transitions out
+  [ConnectionState.CLOSED, ConnectionState.IDLE],       // terminal - no transitions out
 ];
 
 for (const [from, to] of invalidTransitions) {
@@ -91,7 +91,7 @@ for (const [from, to] of invalidTransitions) {
 }
 
 // CLOSED is terminal
-test('CLOSED is terminal — no transitions out', () => {
+test('CLOSED is terminal - no transitions out', () => {
   const allStates = Object.values(ConnectionState);
   for (const to of allStates) {
     assertEqual(canTransition(ConnectionState.CLOSED, to), false, `CLOSED → ${to}`);
@@ -136,7 +136,7 @@ test('cooldown expires → breaker closes', () => {
   assertEqual(cb.isOpen(future), false, 'after cooldown');
 });
 
-test('counter resets after trip — needs 5 MORE failures to re-trip', () => {
+test('counter resets after trip - needs 5 MORE failures to re-trip', () => {
   const cb = new CircuitBreaker(5, 1);  // 1ms cooldown
   // Trip it
   for (let i = 0; i < 5; i++) cb.recordFailure();
@@ -146,9 +146,9 @@ test('counter resets after trip — needs 5 MORE failures to re-trip', () => {
   cb.recordSuccess();
   assertEqual(cb.isOpen(), false, 'success clears trip');
 
-  // Counter was reset on trip AND by success — need full 5 more
+  // Counter was reset on trip AND by success - need full 5 more
   for (let i = 0; i < 4; i++) cb.recordFailure();
-  assertEqual(cb.isOpen(), false, '4 more failures — not tripped yet');
+  assertEqual(cb.isOpen(), false, '4 more failures - not tripped yet');
 
   cb.recordFailure(); // 5th
   assertEqual(cb.isOpen(), true, '5th failure re-trips');

@@ -1,5 +1,5 @@
 /**
- * ConnectionState — validated finite state machine for child server connections.
+ * ConnectionState - validated finite state machine for child server connections.
  */
 export enum ConnectionState {
   IDLE = 'idle',           // Ready for use
@@ -17,7 +17,7 @@ const VALID_TRANSITIONS: Record<ConnectionState, ConnectionState[]> = {
   [ConnectionState.CONNECTING]: [ConnectionState.ACTIVE, ConnectionState.FAILED, ConnectionState.CLOSED],
   [ConnectionState.ACTIVE]: [ConnectionState.IDLE, ConnectionState.FAILED, ConnectionState.CLOSED],
   [ConnectionState.FAILED]: [ConnectionState.CONNECTING, ConnectionState.CLOSED],
-  [ConnectionState.CLOSED]: []  // terminal — no transitions out
+  [ConnectionState.CLOSED]: []  // terminal - no transitions out
 };
 
 export function canTransition(from: ConnectionState, to: ConnectionState): boolean {
@@ -85,8 +85,8 @@ export interface TrustDecision {
 /**
  * Pool sizing config.
  *
- * Upper bound: poolSize + resPoolSize — evict idle children when exceeded.
- * Lower bound: minPoolSize — caller launches new children when below.
+ * Upper bound: poolSize + resPoolSize - evict idle children when exceeded.
+ * Lower bound: minPoolSize - caller launches new children when below.
  * Reserve pool: activates only when resPoolTimeout > 0, resPoolSize > 0,
  *   AND the oldest waiter has waited >= resPoolTimeout.
  * Eviction: LIFO insert at HEAD + evict from TAIL = oldest idle evicted first.

@@ -6,10 +6,10 @@ node_modules/
 *.mp4
 *.cast
 
-# MCP config (contains local paths / secrets — copy from .mcp.example.json)
+# MCP config (contains local paths / secrets - copy from .mcp.example.json)
 .mcp.json
 
-# Environment (credentials — NEVER commit)
+# Environment (credentials - NEVER commit)
 .env
 .env.*
 !.env.example

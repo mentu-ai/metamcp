@@ -10,7 +10,7 @@ import { log } from './log.js';
  *   3. warning + leave literal
  *
  * All vault lookups are cached for the process lifetime.
- * Resolution happens once at config load time — no per-connection overhead.
+ * Resolution happens once at config load time - no per-connection overhead.
  */
 
 const vaultCache = new Map<string, string | null>();
