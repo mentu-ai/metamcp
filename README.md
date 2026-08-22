@@ -10,6 +10,10 @@ MetaMCP connects all your MCP servers through one. Your model sees 6 tools inste
 
 Think of it like a power strip for MCP servers. Plug in as many as you need -- playwright, databases, GitHub, custom tools -- and your LLM talks to one server that handles everything behind the scenes.
 
+It is for anyone whose MCP client has enough servers configured that tool schemas are crowding out
+the context window. It runs standalone, needs no account, and works with any MCP client. MetaMCP is
+built and maintained by [Mentu](https://mentu.ai) and installs nothing else from the Mentu stack.
+
 ```
                         ┌─── playwright (52 tools)
                         │
@@ -66,7 +70,7 @@ Beyond token savings, MetaMCP handles the things you shouldn't have to think abo
 **Install and run:**
 
 ```bash
-npx @mentu/metamcp@0.5.0        # run directly (no install)
+npx @mentu/metamcp               # run directly (no install)
 npm install -g @mentu/metamcp    # or install globally
 ```
 
@@ -175,7 +179,7 @@ Check whether a specific skill's dependencies are satisfied before using it.
 { "skill": "playwright" }
 ```
 
-Skills live in `~/.claude/skills/` (personal) or `.claude/skills/` (project). MetaMCP scans both locations and matches skills to their companion MCP servers via the `requires-mcp` frontmatter field. See [Skills](https://metamcp.org/concepts/skills) in the docs.
+Skills live in `~/.claude/skills/` (personal) or `.claude/skills/` (project). MetaMCP scans both locations and matches skills to their companion MCP servers via the `requires-mcp` frontmatter field.
 
 ## Server Gallery
 
@@ -198,7 +202,7 @@ Companion skills detected:
 These skills teach agents how to use these servers effectively.
 ```
 
-See the full gallery at [metamcp.org/guides/server-gallery](https://metamcp.org/guides/server-gallery).
+`metamcp add --list` prints the whole gallery. See [Adding servers](https://metamcp.org/guides/adding-servers) in the docs.
 
 ## Evidence Export
 
@@ -301,7 +305,7 @@ Hard-coding `API_KEY` strings in `.mcp.json` is the easiest way to leak credenti
 
 Resolution order for each `${KEY}`:
 
-1. **`mentu vault`** - if [mentu-vault](https://github.com/mentu-ai/mentu-vault) is installed at `~/.local/bin/mentu-vault`, MetaMCP looks up the key in the macOS Keychain (or the age-encrypted file fallback). Workspace-scoped lookup is tried first when `MENTU_WORKSPACE` is set, then global.
+1. **`mentu vault`** - if a `mentu-vault` binary is present at `~/.local/bin/mentu-vault`, MetaMCP looks up the key in the macOS Keychain (or the age-encrypted file fallback). Workspace-scoped lookup is tried first when `MENTU_WORKSPACE` is set, then global. `mentu-vault` is not publicly distributed, so most users land on step 2.
 2. **`process.env`** - standard environment variable.
 3. **Literal** - if neither resolves, MetaMCP logs a warning and leaves the `${KEY}` reference in place so misconfiguration is visible instead of silent.
 
