@@ -1,0 +1,23 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.mentu-ai/metamcp",
+  "title": "MetaMCP",
+  "description": "Route long-tail MCP servers through three lazy tools and reviewed declarative Methods.",
+  "version": "1.0.0",
+  "repository": {
+    "url": "https://github.com/mentu-ai/metamcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/mentu-ai/metamcp#readme",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@mentu/metamcp",
+      "version": "1.0.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

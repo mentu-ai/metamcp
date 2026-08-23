@@ -40,6 +40,15 @@ Requires Node.js 20 or newer.
 npx @mentu/metamcp@latest --config .mcp.json
 ```
 
+Inspect the complete model-facing surface before configuring a client:
+
+```bash
+npx @mentu/metamcp@latest tools
+npx @mentu/metamcp@latest tools --json
+```
+
+The inspector reads the same definitions returned by MCP `tools/list`, then exits before loading configuration, opening storage, starting a child, or binding a transport. `--json` includes the complete input schemas for automated review and version-to-version diffs.
+
 Create `.mcp.json`:
 
 ```json
@@ -74,6 +83,26 @@ metamcp init --client Codex --yes    # apply atomically and write a .bak
 ```
 
 Malformed JSON is rejected and left untouched. A named client may be created explicitly; MetaMCP never creates every supported client config by default.
+
+For a manual client configuration, use an absolute path so the gateway does not depend on the client's working directory:
+
+```json
+{
+  "mcpServers": {
+    "metamcp": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@mentu/metamcp@latest",
+        "--config",
+        "/absolute/path/to/.mcp.json"
+      ]
+    }
+  }
+}
+```
+
+`@latest` is convenient for evaluation. Pin `@mentu/metamcp@1.0.0` in controlled environments so upgrades are deliberate and reviewable.
 
 ## The three tools
 
@@ -231,6 +260,10 @@ npm ci
 npm run typecheck
 npm test
 ./scripts/smoke-test.sh
+npm run check:release
+npm pack --dry-run
 ```
+
+`npm publish` runs the full `verify:release` gate again. The gate derives the public tool surface from the built CLI and checks package, lockfile, changelog, and official MCP Registry metadata for version drift.
 
 Apache-2.0 licensed. Maintained by [Mentu AI](https://mentu.ai).

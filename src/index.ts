@@ -58,12 +58,13 @@ function readPackageVersion(): string {
 }
 
 function printHelp(): void {
-  const help = `metamcp - Meta-MCP server, OS for MCP servers
+  const help = `metamcp - on-demand gateway for long-tail MCP servers
 
 Usage: metamcp [options]
        metamcp init [--yes] [--client <name>] [--json]
        metamcp add <server> [<server>...] [--config <path>]
        metamcp add --list [--category <name>] [--json]
+       metamcp tools [--json]
 
 Commands:
   init                       Preview setup for detected MCP clients
@@ -75,6 +76,8 @@ Commands:
     --category <name>        Filter by category
     --config <path>          Target config file (default: .mcp.json)
     --json                   Output structured JSON
+  tools                      Inspect MetaMCP's exact model-facing tool surface
+    --json                   Include complete input schemas as JSON
 
 Options:
   --config <path>            Path to .mcp.json (default: .mcp.json)
@@ -233,6 +236,80 @@ function normalizeHttpPath(path: string): string {
   return path.startsWith('/') ? path : `/${path}`;
 }
 
+function gatewayToolDefinitions() {
+  return [
+    {
+      name: 'mcp_discover',
+      description: 'Search configured servers, cached child tool schemas, and declarative Methods without starting every child. Set refresh=true with a specific server to refresh only that server.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          query: { type: 'string', description: 'Capability search query' },
+          kind: { type: 'string', enum: ['all', 'server', 'tool', 'method'], description: 'Result kind (default: all)' },
+          server: { type: 'string', description: 'Filter child tools to one configured server' },
+          refresh: { type: 'boolean', description: 'Connect to the named server and refresh its live schemas' },
+        },
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'mcp_call',
+      description: 'Call one explicitly named child tool. The target starts lazily. Calls are never replayed implicitly after a timeout or transport failure.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          server: { type: 'string', description: 'Configured child server name' },
+          tool: { type: 'string', description: 'Child tool name' },
+          args: { type: 'object', description: 'Arguments passed to the child tool' },
+          timeoutMs: { type: 'integer', minimum: 1, maximum: 600000, description: 'Optional per-call deadline' },
+        },
+        required: ['server', 'tool'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'mcp_run',
+      description: 'Run a reviewed declarative Method: a bounded, schema-validated sequence of lazy child calls with typed gaps and trace evidence.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          method: { type: 'string', description: 'Registered Method name' },
+          input: { type: 'object', description: 'Method input validated against its JSON Schema' },
+        },
+        required: ['method', 'input'],
+        additionalProperties: false,
+      },
+    },
+  ];
+}
+
+function runToolsCli(args: string[]): void {
+  if (args.length === 1 && args[0] === '--help') {
+    process.stdout.write('Usage: metamcp tools [--json]\n');
+    return;
+  }
+  const json = args.length === 1 && args[0] === '--json';
+  if (args.length > 0 && !json) {
+    throw new Error(`Unknown tools option: ${args[0]}`);
+  }
+
+  const tools = gatewayToolDefinitions();
+  if (json) {
+    process.stdout.write(JSON.stringify({
+      name: 'metamcp',
+      version: readPackageVersion(),
+      toolCount: tools.length,
+      tools,
+    }, null, 2) + '\n');
+    return;
+  }
+
+  process.stdout.write(`MetaMCP ${readPackageVersion()} — ${tools.length} model-facing tools\n\n`);
+  for (const tool of tools) {
+    process.stdout.write(`${tool.name}\n  ${tool.description}\n`);
+  }
+}
+
 function parseInitOptions(args: string[]): { yes: boolean; json: boolean; clients: string[] } {
   const options = { yes: false, json: false, clients: [] as string[] };
   for (let index = 0; index < args.length; index++) {
@@ -252,6 +329,19 @@ function parseInitOptions(args: string[]): { yes: boolean; json: boolean; client
     }
   }
   return options;
+}
+
+// --- Subcommand: tools ---
+// This path intentionally exits before configuration, child-process, storage, or
+// transport initialization. It is safe to use when reviewing a package upgrade.
+if (process.argv[2] === 'tools') {
+  try {
+    runToolsCli(process.argv.slice(3));
+    process.exit(0);
+  } catch (err) {
+    process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  }
 }
 
 // --- Subcommand: init ---
@@ -339,50 +429,7 @@ function createMetaMcpServer(): Server {
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
-      tools: [
-        {
-          name: 'mcp_discover',
-          description: 'Search configured servers, cached child tool schemas, and declarative Methods without starting every child. Set refresh=true with a specific server to refresh only that server.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              query: { type: 'string', description: 'Capability search query' },
-              kind: { type: 'string', enum: ['all', 'server', 'tool', 'method'], description: 'Result kind (default: all)' },
-              server: { type: 'string', description: 'Filter child tools to one configured server' },
-              refresh: { type: 'boolean', description: 'Connect to the named server and refresh its live schemas' },
-            },
-            additionalProperties: false,
-          },
-        },
-        {
-          name: 'mcp_call',
-          description: 'Call one explicitly named child tool. The target starts lazily. Calls are never replayed implicitly after a timeout or transport failure.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              server: { type: 'string', description: 'Configured child server name' },
-              tool: { type: 'string', description: 'Child tool name' },
-              args: { type: 'object', description: 'Arguments passed to the child tool' },
-              timeoutMs: { type: 'integer', minimum: 1, maximum: 600000, description: 'Optional per-call deadline' },
-            },
-            required: ['server', 'tool'],
-            additionalProperties: false,
-          },
-        },
-        {
-          name: 'mcp_run',
-          description: 'Run a reviewed declarative Method: a bounded, schema-validated sequence of lazy child calls with typed gaps and trace evidence.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              method: { type: 'string', description: 'Registered Method name' },
-              input: { type: 'object', description: 'Method input validated against its JSON Schema' },
-            },
-            required: ['method', 'input'],
-            additionalProperties: false,
-          },
-        },
-      ],
+      tools: gatewayToolDefinitions(),
     };
   });
 

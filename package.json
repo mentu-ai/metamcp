@@ -1,6 +1,7 @@
 {
   "name": "@mentu/metamcp",
   "version": "1.0.0",
+  "mcpName": "io.github.mentu-ai/metamcp",
   "description": "A secure on-demand gateway for long-tail MCP servers with lazy calls and declarative Method Mode.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -13,6 +14,7 @@
     "docs",
     "schemas",
     "examples/methods",
+    "server.json",
     "!dist/__tests__",
     "!dist/**/*.js.map",
     "!dist/**/*.d.ts.map",
@@ -22,19 +24,25 @@
     "type": "git",
     "url": "git+https://github.com/mentu-ai/metamcp.git"
   },
-  "homepage": "https://metamcp.org",
+  "homepage": "https://github.com/mentu-ai/metamcp#readme",
   "bugs": {
     "url": "https://github.com/mentu-ai/metamcp/issues"
   },
   "engines": {
     "node": ">=20"
   },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "scripts": {
     "build": "node --eval \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc && node --eval \"const fs=require('fs');for(const f of['dist/index.js','dist/init.js']){try{const c=fs.readFileSync(f,'utf8');if(!c.startsWith('#!'))fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c);fs.chmodSync(f,0o755)}catch{}}\"",
     "start": "node dist/index.js",
     "test": "npm run build && node dist/__tests__/methods.test.js && node dist/__tests__/surface-e2e.test.js && node dist/__tests__/config-security.test.js && node dist/__tests__/init.test.js && node dist/__tests__/gallery.test.js && node dist/__tests__/error-classifier.test.js && node dist/__tests__/schema-cache.test.js && node dist/__tests__/http-transport.test.js && node dist/__tests__/child-manager.test.js && node dist/__tests__/store.test.js && node dist/__tests__/bpe-tokenizer.test.js && node dist/__tests__/evidence.test.js && node dist/__tests__/evidence-export.test.js && node dist/__tests__/sdk-internals.test.js && node dist/__tests__/dual-era.test.js && node dist/__tests__/oauth-hardening.test.js && node dist/__tests__/era-probe.test.js && node dist/__tests__/resource-auth.test.js && node dist/__tests__/gateway-auth.test.js && node dist/__tests__/modern-client.test.js && node dist/__tests__/vector-catalog.test.js",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "check:release": "node scripts/check-release.mjs",
+    "verify:release": "npm run typecheck && npm test && ./scripts/smoke-test.sh && npm run check:release",
+    "prepublishOnly": "npm run verify:release"
   },
   "keywords": [
     "mcp",

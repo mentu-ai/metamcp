@@ -29,18 +29,20 @@ npm run typecheck
 
 ```
 src/
-  index.ts          # CLI entry point, MCP server, tool handlers
-  child-manager.ts  # Connection pool, lifecycle, circuit breaker
-  methods.ts        # Declarative Method registry and bounded runtime
-  catalog.ts        # Tool catalog with keyword search
-  config.ts         # .mcp.json loader
-  types.ts          # Shared types, FSM, pool config
-  mcp-client.ts     # stdio MCP client wrapper
-  circuit-breaker.ts
-  registry.ts       # npm registry search
-  ledger.ts         # Call audit log
-  log.ts            # Structured stderr logging
-  __tests__/        # Test suites
+  index.ts             # CLI, transports, exact three-tool MCP surface
+  methods.ts           # Declarative Method registry and bounded runtime
+  child-manager.ts     # Lazy connections, serialization, circuit breaker
+  config.ts            # Validated .mcp.json loader and secret references
+  config-imports.ts    # Explicit editor-config discovery
+  catalog.ts           # Cached child schemas and local keyword search
+  schema-cache.ts      # Durable schema cache
+  gateway-auth.ts      # Inbound HTTP authorization policy
+  resource-auth.ts     # OAuth protected-resource validation
+  ledger.ts            # Ordered call and Method audit log
+  evidence-export.ts   # Portable hash-linked evidence bundles
+  init.ts              # Preview-first client configuration
+  gallery.ts           # Human-operated optional server gallery
+  __tests__/           # Unit, protocol, security, and E2E suites
 ```
 
 ## Commit Convention

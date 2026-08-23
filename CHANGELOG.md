@@ -2,7 +2,7 @@
 
 ## v1.0.0
 
-Unreleased.
+Released 2026-08-22.
 
 - Redefined MetaMCP as an on-demand gateway for long-tail MCP servers rather than a universal replacement for direct MCP connections.
 - Reduced the model-facing surface to `mcp_discover`, `mcp_call`, and `mcp_run`.
@@ -20,6 +20,8 @@ Unreleased.
 - Made `metamcp init` preview-only by default, targetable by client, atomic on apply, and fail-closed on malformed JSON.
 - Made ledger appends ordered and awaited before returning a completed gateway call.
 - Added unit and end-to-end coverage for Method manifests, typed gaps, retry/poll bounds, write policy, lazy spawn, concurrent startup, uncertain mutation delivery, init safety, HTTP Origin checks, and bind posture.
+- Added a side-effect-free `metamcp tools [--json]` inspector backed by the same definitions served over MCP.
+- Added version-synchronized MCP Registry metadata and an executable pre-publish release contract.
 
 ## v0.7.0
 

@@ -87,6 +87,20 @@ EXPECTED_VERSION="$(node -p "require('./package.json').version")"
 VERSION_OUT="$(node dist/index.js --version 2>&1 || true)"
 echo "$VERSION_OUT" | grep "$EXPECTED_VERSION" >/dev/null && check "--version prints package version" 1 || check "--version prints package version" 0
 
+printf '{malformed' > "$TMPDIR_PATH/malformed-tools-config.json"
+TOOLS_OUT="$(METAMCP_CONFIG="$TMPDIR_PATH/malformed-tools-config.json" node dist/index.js tools 2>&1)"
+echo "$TOOLS_OUT" | grep '3 model-facing tools' >/dev/null && check "tools reports exact surface count" 1 || check "tools reports exact surface count" 0
+
+METAMCP_CONFIG="$TMPDIR_PATH/malformed-tools-config.json" node dist/index.js tools --json > "$TMPDIR_PATH/tools.json"
+node -e "const r=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')); const names=r.tools.map(t=>t.name).join(','); if (r.toolCount !== 3 || names !== 'mcp_discover,mcp_call,mcp_run') process.exit(1)" "$TMPDIR_PATH/tools.json" \
+  && check "tools --json reports schemas without loading config" 1 || check "tools --json reports schemas without loading config" 0
+
+if node dist/index.js tools --bogus >"$TMPDIR_PATH/invalid-tools.out" 2>&1; then
+  check "unknown tools option fails closed" 0
+else
+  grep 'Unknown tools option' "$TMPDIR_PATH/invalid-tools.out" >/dev/null && check "unknown tools option fails closed" 1 || check "unknown tools option fails closed" 0
+fi
+
 if node dist/index.js --config >"$TMPDIR_PATH/missing-option.out" 2>&1; then
   check "missing option value fails closed" 0
 else
