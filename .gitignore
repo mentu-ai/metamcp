@@ -23,9 +23,6 @@ node_modules/
 # Mentu build artifacts
 .mentu/
 
-# Internal docs
-docs/
-
 # Docs site (deployed separately)
 docs-site/
 .mentu-pid

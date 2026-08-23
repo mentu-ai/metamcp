@@ -1,7 +1,7 @@
 /**
  * ChildManager + CircuitBreaker Unit Tests
  *
- * Hand-rolled runner (same pattern as sandbox.test.ts).
+ * Hand-rolled test runner.
  * Import from .js extensions, run from dist/.
  *
  * Test groups:
@@ -13,6 +13,7 @@
 
 import { ConnectionState, canTransition } from '../types.js';
 import { CircuitBreaker } from '../circuit-breaker.js';
+import { buildChildEnvironment } from '../mcp-client.js';
 
 // ─── Test Runner ─────────────────────────────────────────────────────────────
 
@@ -191,6 +192,32 @@ test('FAILED can only go to CONNECTING or CLOSED', () => {
   assertEqual(canTransition(ConnectionState.FAILED, ConnectionState.CLOSED), true, 'FAILED → CLOSED');
   assertEqual(canTransition(ConnectionState.FAILED, ConnectionState.ACTIVE), false, 'FAILED → ACTIVE');
   assertEqual(canTransition(ConnectionState.FAILED, ConnectionState.IDLE), false, 'FAILED → IDLE');
+});
+
+console.log('\nChild Environment Tests\n');
+
+test('stdio children do not inherit ambient secrets', () => {
+  const env = buildChildEnvironment({}, {
+    PATH: '/usr/bin',
+    HOME: '/tmp/home',
+    AWS_SECRET_ACCESS_KEY: 'must-not-leak',
+    DATABASE_URL: 'must-not-leak',
+  });
+  assertEqual(env.PATH, '/usr/bin', 'PATH inherited');
+  assertEqual(env.HOME, '/tmp/home', 'HOME inherited');
+  assert(!('AWS_SECRET_ACCESS_KEY' in env), 'AWS secret excluded');
+  assert(!('DATABASE_URL' in env), 'database secret excluded');
+});
+
+test('explicit inheritEnv and configured env are honored', () => {
+  const env = buildChildEnvironment(
+    { inheritEnv: ['CUSTOM_RUNTIME'], env: { API_KEY: 'scoped', PATH: '/custom/bin' } },
+    { PATH: '/usr/bin', CUSTOM_RUNTIME: 'enabled', OTHER_SECRET: 'hidden' },
+  );
+  assertEqual(env.CUSTOM_RUNTIME, 'enabled', 'explicit inherited value');
+  assertEqual(env.API_KEY, 'scoped', 'configured secret');
+  assertEqual(env.PATH, '/custom/bin', 'configured env override');
+  assert(!('OTHER_SECRET' in env), 'unlisted value excluded');
 });
 
 // ─── Results ─────────────────────────────────────────────────────────────────

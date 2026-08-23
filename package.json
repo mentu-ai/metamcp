@@ -1,7 +1,7 @@
 {
   "name": "@mentu/metamcp",
-  "version": "0.7.0",
-  "description": "A meta-MCP server that collapses N child MCP servers into 6 tools. Intent routing, lazy spawning, connection pooling, semantic search, evidence, and sandboxed execution.",
+  "version": "1.0.0",
+  "description": "A secure on-demand gateway for long-tail MCP servers with lazy calls and declarative Method Mode.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
@@ -10,6 +10,9 @@
   },
   "files": [
     "dist",
+    "docs",
+    "schemas",
+    "examples/methods",
     "!dist/__tests__",
     "!dist/**/*.js.map",
     "!dist/**/*.d.ts.map",
@@ -27,9 +30,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc && node --eval \"const fs=require('fs');for(const f of['dist/index.js','dist/init.js']){try{const c=fs.readFileSync(f,'utf8');if(!c.startsWith('#!'))fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c);fs.chmodSync(f,0o755)}catch{}}\"",
+    "build": "node --eval \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc && node --eval \"const fs=require('fs');for(const f of['dist/index.js','dist/init.js']){try{const c=fs.readFileSync(f,'utf8');if(!c.startsWith('#!'))fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c);fs.chmodSync(f,0o755)}catch{}}\"",
     "start": "node dist/index.js",
-    "test": "npm run build && node dist/__tests__/sandbox.test.js && node dist/__tests__/http-transport.test.js && node dist/__tests__/child-manager.test.js && node dist/__tests__/store.test.js && node dist/__tests__/bpe-tokenizer.test.js && node dist/__tests__/evidence.test.js && node dist/__tests__/evidence-export.test.js && node dist/__tests__/sdk-internals.test.js && node dist/__tests__/dual-era.test.js && node dist/__tests__/oauth-hardening.test.js && node dist/__tests__/era-probe.test.js && node dist/__tests__/resource-auth.test.js && node dist/__tests__/gateway-auth.test.js && node dist/__tests__/modern-client.test.js",
+    "test": "npm run build && node dist/__tests__/methods.test.js && node dist/__tests__/surface-e2e.test.js && node dist/__tests__/config-security.test.js && node dist/__tests__/init.test.js && node dist/__tests__/gallery.test.js && node dist/__tests__/error-classifier.test.js && node dist/__tests__/schema-cache.test.js && node dist/__tests__/http-transport.test.js && node dist/__tests__/child-manager.test.js && node dist/__tests__/store.test.js && node dist/__tests__/bpe-tokenizer.test.js && node dist/__tests__/evidence.test.js && node dist/__tests__/evidence-export.test.js && node dist/__tests__/sdk-internals.test.js && node dist/__tests__/dual-era.test.js && node dist/__tests__/oauth-hardening.test.js && node dist/__tests__/era-probe.test.js && node dist/__tests__/resource-auth.test.js && node dist/__tests__/gateway-auth.test.js && node dist/__tests__/modern-client.test.js && node dist/__tests__/vector-catalog.test.js",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
@@ -43,21 +46,23 @@
     "agent",
     "tool-routing",
     "mcp-orchestration",
+    "method-mode",
     "claude",
     "automation"
   ],
   "author": "Mentu AI (https://github.com/mentu-ai)",
   "license": "Apache-2.0",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.27.1",
-    "jose": "^6.1.3"
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "ajv": "^8.20.0",
+    "jose": "^6.2.10"
   },
   "optionalDependencies": {
     "better-sqlite3": "^12.6.2"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^25.3.2",
+    "@types/node": "^25.9.5",
     "typescript": "^5.9.3"
   }
 }

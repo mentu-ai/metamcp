@@ -4,7 +4,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { Tool, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import type { ServerConfig, ToolDefinition } from './types.js';
+import type { ChildCallOptions, ServerConfig, ToolDefinition } from './types.js';
 import { FileOAuthProvider } from './oauth-provider.js';
 import {
   PreStartedTransport,
@@ -43,6 +43,26 @@ export function resolveChildProcess(transport: unknown): ChildProcess | null {
  * a child costs a moment, not a stall, on every connect.
  */
 const ERA_PROBE_TIMEOUT_MS = 3000;
+
+const SAFE_INHERITED_ENV = [
+  'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TEMP', 'TMP',
+  'LANG', 'LC_ALL', 'TERM', 'SystemRoot', 'ComSpec', 'PATHEXT',
+  'APPDATA', 'LOCALAPPDATA', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME',
+] as const;
+
+/** Build a minimal child environment instead of leaking the gateway's secrets. */
+export function buildChildEnvironment(
+  config: Pick<ServerConfig, 'env' | 'inheritEnv'>,
+  parent: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  const names = new Set<string>([...SAFE_INHERITED_ENV, ...(config.inheritEnv ?? [])]);
+  const childEnv: Record<string, string> = {};
+  for (const name of names) {
+    const value = parent[name];
+    if (value !== undefined) childEnv[name] = value;
+  }
+  return { ...childEnv, ...(config.env ?? {}) };
+}
 
 export class McpClient {
   private client: Client | null = null;
@@ -95,10 +115,7 @@ export class McpClient {
       this.transport = new StdioClientTransport({
         command: this.config.command,
         args: this.config.args ?? [],
-        env: {
-          ...process.env,
-          ...this.config.env,
-        } as Record<string, string>,
+        env: buildChildEnvironment(this.config),
       });
     }
 
@@ -229,21 +246,35 @@ export class McpClient {
     }));
   }
 
-  async callTool(name: string, args?: Record<string, unknown>): Promise<CallToolResult> {
+  async callTool(
+    name: string,
+    args?: Record<string, unknown>,
+    options: ChildCallOptions = {},
+  ): Promise<CallToolResult> {
+    const timeoutMs = Math.max(1, options.timeoutMs ?? this.config.timeoutMs ?? 60_000);
     if (this.modern) {
-      const result = await this.modern.callTool(name, args, this.config.timeoutMs ?? 60_000);
+      const result = await this.modern.callTool(name, args, timeoutMs);
       return result as unknown as CallToolResult;
     }
     if (!this.client) throw new Error(`Not connected to ${this.config.name}`);
     const result = await this.client.callTool(
       { name, arguments: args },
       undefined,
-      { timeout: this.config.timeoutMs ?? 60_000 },
+      { timeout: timeoutMs },
     );
     return result as CallToolResult;
   }
 
   async disconnect(): Promise<void> {
+    if (this.modern) {
+      try {
+        await this.modern.close();
+      } catch {
+        // ignore close errors
+      }
+      this.modern = null;
+      this.transport = null;
+    }
     if (this.client) {
       try {
         await this.client.close();
@@ -260,9 +291,11 @@ export class McpClient {
       }
       this.transport = null;
     }
+    this.authProvider?.dispose();
+    this.authProvider = null;
   }
 
   get isConnected(): boolean {
-    return this.client !== null;
+    return this.client !== null || this.modern !== null;
   }
 }

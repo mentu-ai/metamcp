@@ -2,7 +2,7 @@
 
 This sample shows a Python Google ADK agent consuming MetaMCP through Google Agent Registry.
 
-The registry entry points at a deployed MetaMCP Cloud Run service, and ADK resolves it as an `McpToolset`. The agent then sees the six MetaMCP gateway tools instead of every child MCP tool.
+The registry entry points at a deployed MetaMCP Cloud Run service, and ADK resolves it as an `McpToolset`. The agent then sees the three MetaMCP gateway tools instead of every long-tail child MCP tool.
 
 ## Run Locally
 

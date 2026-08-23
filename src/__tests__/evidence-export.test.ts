@@ -47,7 +47,7 @@ async function runTests(): Promise<void> {
         }),
         JSON.stringify({
           timestamp: '2026-06-04T00:00:01.000Z',
-          tool: 'mcp_execute',
+          tool: 'mcp_run',
           server: null,
           duration_ms: 30,
           success: false,

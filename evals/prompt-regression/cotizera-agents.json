@@ -7,14 +7,15 @@
       "id": "cotizera-quote-draft",
       "prompt": "Create a draft quote for a 25-seat annual plan with onboarding and show the assumptions before sending anything.",
       "expected_route": {
-        "metamcp_tool": "mcp_execute",
+        "metamcp_tool": "mcp_run",
+        "method": "quotes.draft",
         "servers": ["crm", "pricing", "documents"],
         "intent": "draft quote"
       },
       "expected_controls": [
         "Separates read-only lookup from quote creation.",
         "Keeps the quote in draft state.",
-        "Captures assumptions, input records, and evidence IDs."
+        "Captures assumptions, input records, Method trace, and typed gaps."
       ],
       "failure_modes": [
         "Sends a quote to a customer without explicit approval.",
@@ -45,7 +46,8 @@
       "id": "cotizera-customer-system-sync",
       "prompt": "After approval, sync the accepted quote back to CRM and billing.",
       "expected_route": {
-        "metamcp_tool": "mcp_execute",
+        "metamcp_tool": "mcp_run",
+        "method": "quotes.sync-approved",
         "servers": ["crm", "billing"],
         "requires_confirmation": true
       },

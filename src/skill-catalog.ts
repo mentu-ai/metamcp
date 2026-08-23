@@ -144,7 +144,7 @@ export class SkillCatalog {
     for (const { dir } of this.scanDirs) {
       if (!existsSync(dir)) continue;
       try {
-        watch(dir, { recursive: true }, (_event, filename) => {
+        watch(dir, { recursive: true, persistent: false }, (_event, filename) => {
           if (filename && (filename.endsWith('SKILL.md') || filename.endsWith('.md'))) {
             setTimeout(() => this.reload(), 500);
           }
@@ -196,7 +196,7 @@ export class SkillCatalog {
     const recommendations: string[] = [];
     for (const [server, status] of Object.entries(mcpStatus)) {
       if (!status.available) {
-        recommendations.push(`Provision "${server}" first via mcp_provision or: metamcp add ${server}`);
+        recommendations.push(`Add "${server}" explicitly with: metamcp add ${server}`);
       }
     }
 

@@ -1,7 +1,7 @@
 /**
  * Modern-Era Outbound Tests (client side of MCP 2026-07-28)
  *
- * Hand-rolled runner (same pattern as sandbox.test.ts).
+ * Hand-rolled test runner.
  * Import from .js extensions, run from dist/.
  *
  * Test groups:
@@ -398,6 +398,19 @@ await test('closing a session fails its in-flight requests', async () => {
   await session.close();
   const err = await inflight;
   assert(err instanceof Error, `expected a rejection, got ${String(err)}`);
+});
+
+await test('an unexpected transport close fails in-flight requests immediately', async () => {
+  const inner = new ScriptedTransport(() => null);
+  const t = new PreStartedTransport(inner);
+  await t.start();
+  const session = new ModernMcpSession(t, { clientInfo: CLIENT_INFO, requestTimeoutMs: 5000 });
+  const startedAt = Date.now();
+  const inflight = session.request('slow').then(() => null, (e: unknown) => e);
+  inner.onclose?.();
+  const err = await inflight;
+  assert(err instanceof Error && err.message.includes('Transport closed'), `unexpected rejection: ${String(err)}`);
+  assert(Date.now() - startedAt < 500, 'transport close waited for the request timeout');
 });
 
 // ─── 4. Round-trip Against Our Own Server Surface ────────────────────────────

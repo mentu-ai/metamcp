@@ -19,15 +19,22 @@ We will acknowledge your report within 48 hours and provide a timeline for a fix
 
 MetaMCP has a security-sensitive architecture. The following areas are in scope:
 
-- **V8 sandbox escape** - any code that breaks out of the `mcp_execute` sandbox (`vm.Context` isolation, prototype freezing, `eval`/`Function` constructor blocking)
-- **Child process injection** - command injection via `.mcp.json` config entries, argument manipulation, or environment variable leakage
-- **Trust policy bypass** - circumventing the trust evaluation for auto-provisioning npm registry packages
-- **Connection pool state corruption** - manipulating the circuit breaker, idle sweep, or pool bounds to cause denial of service
+- **Child process injection or credential leakage** through configuration, arguments, environment inheritance, or response handling
+- **Gateway authorization bypass** in OAuth/JWT, shared-token, Origin, or bind-address enforcement
+- **Method policy bypass** including unsafe template traversal, unbounded execution, write-effect bypass, or retrying a non-idempotent step
+- **Connection lifecycle corruption** including duplicate child spawn, stale configuration use, or implicit replay after uncertain delivery
+- **Protocol confusion** between legacy and modern MCP request paths
 
 ## Out of Scope
 
 - Vulnerabilities in child MCP servers themselves (report those to the respective projects)
 - Denial of service via legitimate heavy usage (resource limits are configurable via CLI flags)
+
+## Security boundary
+
+Configured child MCP servers are trusted code. MetaMCP does not sandbox a child's operating-system access. Use containers, separate users/service accounts, network policy, and scoped credentials when isolation is required.
+
+MetaMCP 1.0 removed the model-facing arbitrary JavaScript executor. Reports about a way to re-enable or remotely reach code execution through the three-tool surface are in scope.
 
 ## Supported Versions
 

@@ -26,6 +26,12 @@ export function canTransition(from: ConnectionState, to: ConnectionState): boole
 
 export type ServiceCriticality = 'vital' | 'optional';
 
+export const SERVER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+export function isValidServerName(name: string): boolean {
+  return SERVER_NAME_PATTERN.test(name);
+}
+
 export type TransportType = 'stdio' | 'http' | 'sse';
 
 export type ServerLifecycle =
@@ -37,6 +43,8 @@ export interface ServerConfig {
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  /** Explicit parent environment variables that may be inherited by a stdio child. */
+  inheritEnv?: string[];
   url?: string;
   transport?: TransportType;
   headers?: Record<string, string>;
@@ -65,21 +73,6 @@ export interface ToolMatch {
   tool: ToolDefinition;
   score: number;
   confidence: number;
-}
-
-export interface RegistryEntry {
-  name: string;
-  description: string;
-  command: string;
-  args?: string[];
-  namespace?: string;
-}
-
-export interface TrustDecision {
-  namespace: string;
-  trusted: boolean;
-  confidence: number;
-  decision: 'allow' | 'deny';
 }
 
 /**
@@ -118,4 +111,9 @@ export interface ChildState {
   toolCount: number;
   criticality: ServiceCriticality;
   restartCount: number;
+}
+
+export interface ChildCallOptions {
+  /** Per-call deadline. The server default is used when omitted. */
+  timeoutMs?: number;
 }

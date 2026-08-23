@@ -9,8 +9,10 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, normalize, resolve } from 'node:path';
-import type { ServerConfig, TransportType } from './types.js';
+import { isValidServerName, type ServerConfig, type TransportType } from './types.js';
 import { log } from './log.js';
+import { registerSecretValues } from './secret-scrubber.js';
+import { resolveSecrets } from './vault-resolver.js';
 
 export type ImportKind = 'cursor' | 'claude-code' | 'claude-desktop' | 'codex' | 'windsurf' | 'opencode' | 'vscode';
 
@@ -205,11 +207,21 @@ function readCodexToml(raw: string): Map<string, ServerConfig> {
 }
 
 function convertEntry(name: string, value: Record<string, unknown>): ServerConfig | null {
+  if (!isValidServerName(name)) return null;
   const url = asString(value.baseUrl ?? value.base_url ?? value.url ?? value.serverUrl ?? value.server_url);
   const command = typeof value.command === 'string' ? value.command : undefined;
-  const args = Array.isArray(value.args) ? value.args.filter((a): a is string => typeof a === 'string') : undefined;
+  if (value.args !== undefined && (!Array.isArray(value.args) || value.args.some(arg => typeof arg !== 'string'))) return null;
+  const args = value.args as string[] | undefined;
 
-  if (!url && !command) return null;
+  if ((!url && !command) || (url && command)) return null;
+  if (url) {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    } catch {
+      return null;
+    }
+  }
 
   const config: ServerConfig = {
     name,
@@ -220,7 +232,10 @@ function convertEntry(name: string, value: Record<string, unknown>): ServerConfi
   if (args) config.args = args;
 
   const env = asStringRecord(value.env);
-  if (env) config.env = env;
+  if (env) {
+    config.env = resolveSecrets(env, secret => registerSecretValues([secret]));
+    registerSensitiveValues(config.env);
+  }
 
   if (url) {
     config.url = url;
@@ -228,12 +243,16 @@ function convertEntry(name: string, value: Record<string, unknown>): ServerConfi
   }
 
   const headers = asStringRecord(value.headers);
-  if (headers) config.headers = headers;
+  if (headers) {
+    config.headers = resolveSecrets(headers, secret => registerSecretValues([secret]));
+    registerSensitiveValues(config.headers);
+  }
 
   // Bearer token support
   const bearerToken = asString(value.bearerToken ?? value.bearer_token);
   if (bearerToken) {
     config.headers = { ...config.headers, Authorization: `Bearer ${bearerToken}` };
+    registerSecretValues([bearerToken]);
   }
 
   if (value.auth === 'oauth' || value.oauth === true) {
@@ -327,11 +346,19 @@ function asString(value: unknown): string | undefined {
 }
 
 function asStringRecord(input: unknown): Record<string, string> | undefined {
-  if (!input || typeof input !== 'object') return undefined;
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
   const record: Record<string, string> = {};
   for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
     if (typeof value === 'string') record[key] = value;
     else if (typeof value === 'number' || typeof value === 'boolean') record[key] = String(value);
   }
   return Object.keys(record).length > 0 ? record : undefined;
+}
+
+function registerSensitiveValues(record: Record<string, string>): void {
+  registerSecretValues(
+    Object.entries(record)
+      .filter(([name]) => /(?:authorization|credential|password|secret|token|api[_-]?key|private[_-]?key)/i.test(name))
+      .map(([, value]) => value),
+  );
 }

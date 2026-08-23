@@ -31,7 +31,9 @@ export class AnthropicEmbedderProvider implements EmbedderProvider {
   private apiKey: string | undefined;
 
   constructor(apiKey?: string) {
-    this.apiKey = apiKey ?? process.env.VOYAGE_API_KEY ?? process.env.ANTHROPIC_API_KEY;
+    // Never infer a network capability from ambient provider credentials.
+    // The gateway passes an explicit, MetaMCP-scoped key when opted in.
+    this.apiKey = apiKey;
   }
 
   isAvailable(): boolean {

@@ -23,3 +23,6 @@ jobs:
       - run: npm run build
       - run: npm run typecheck
       - run: npm test
+      - run: ./scripts/smoke-test.sh
+      - run: npm audit --omit=dev
+      - run: npm pack --dry-run

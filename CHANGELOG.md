@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.0.0
+
+Unreleased.
+
+- Redefined MetaMCP as an on-demand gateway for long-tail MCP servers rather than a universal replacement for direct MCP connections.
+- Reduced the model-facing surface to `mcp_discover`, `mcp_call`, and `mcp_run`.
+- Added declarative Method Mode with JSON Schema input/output validation, bounded sequential steps, safe interpolation, typed gaps, traces, explicit effects, safe retry, and bounded polling.
+- Removed `mcp_execute` and its Node.js VM implementation. There is no unsafe compatibility flag.
+- Removed model-facing package provisioning and skill-advice tools; gallery installation remains an explicit CLI action.
+- Made discovery static/cached by default. Live schema refresh requires one explicit server and never fans out implicitly.
+- Added single-flight child connection startup and serialized per-child calls.
+- Removed automatic call replay after timeouts, crashes, and transport failures.
+- Replaced ambient environment inheritance with a minimal allowlist plus per-child `inheritEnv` and explicit `env` values.
+- Replaced the Mentu-specific shell vault lookup with a generic `SecretProvider` boundary; unresolved references now fail closed.
+- Made discovery local and keyword-only by default; Voyage search and the optional SQLite index now require explicit `METAMCP_VOYAGE_API_KEY` opt-in and load lazily.
+- Changed HTTP's default bind to `127.0.0.1`, refused unauthenticated non-loopback binds, and added exact Origin allowlisting.
+- Extended dual-era handling to the Streamable HTTP request transport.
+- Made `metamcp init` preview-only by default, targetable by client, atomic on apply, and fail-closed on malformed JSON.
+- Made ledger appends ordered and awaited before returning a completed gateway call.
+- Added unit and end-to-end coverage for Method manifests, typed gaps, retry/poll bounds, write policy, lazy spawn, concurrent startup, uncertain mutation delivery, init safety, HTTP Origin checks, and bind posture.
+
 ## v0.7.0
 
 Released 2026-07-30.

@@ -189,23 +189,21 @@ async function runTests(): Promise<void> {
     store.close();
   });
 
-  // 8. isAvailable: returns false when no API key
-  await test('8. AnthropicEmbedderProvider.isAvailable: false when no API key', async () => {
+  // 8. isAvailable: ambient provider keys never opt the gateway into network use
+  await test('8. AnthropicEmbedderProvider ignores ambient API keys', async () => {
     const origKey = process.env.ANTHROPIC_API_KEY;
-    delete process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'ambient-key-must-not-enable-network';
     const provider = new AnthropicEmbedderProvider(undefined);
-    assertEqual(provider.isAvailable(), false, 'should be unavailable without key');
-    if (origKey) process.env.ANTHROPIC_API_KEY = origKey;
+    assertEqual(provider.isAvailable(), false, 'ambient key enabled the provider');
+    if (origKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = origKey;
   });
 
   // 9. Graceful degradation: embedBatch returns empty on error
   await test('9. Graceful degradation: embedBatch returns empty when unavailable', async () => {
-    const origKey = process.env.ANTHROPIC_API_KEY;
-    delete process.env.ANTHROPIC_API_KEY;
     const provider = new AnthropicEmbedderProvider(undefined);
     const result = await provider.embedBatch(['test']);
     assertEqual(result.length, 0, 'should return empty array');
-    if (origKey) process.env.ANTHROPIC_API_KEY = origKey;
   });
 
   // 10. Keyword-only fallback: works when embedder unavailable

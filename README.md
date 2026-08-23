@@ -3,363 +3,234 @@
 [![npm version](https://img.shields.io/npm/v/@mentu/metamcp)](https://www.npmjs.com/package/@mentu/metamcp)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)](https://www.typescriptlang.org)
 [![CI](https://github.com/mentu-ai/metamcp/actions/workflows/ci.yml/badge.svg)](https://github.com/mentu-ai/metamcp/actions/workflows/ci.yml)
 
-MetaMCP connects all your MCP servers through one. Your model sees 6 tools instead of hundreds.
+MetaMCP is a secure, on-demand gateway for the long tail of MCP servers. It gives an MCP client three stable tools:
 
-Think of it like a power strip for MCP servers. Plug in as many as you need -- playwright, databases, GitHub, custom tools -- and your LLM talks to one server that handles everything behind the scenes.
+- `mcp_discover` finds configured servers, cached tool schemas, and reviewed Methods without starting every child.
+- `mcp_call` lazily calls one explicitly named child tool.
+- `mcp_run` executes a bounded, schema-validated declarative Method.
 
-It is for anyone whose MCP client has enough servers configured that tool schemas are crowding out
-the context window. It runs standalone, needs no account, and works with any MCP client. MetaMCP is
-built and maintained by [Mentu](https://mentu.ai) and installs nothing else from the Mentu stack.
+MetaMCP is deliberately not a replacement for every direct MCP connection. Keep important, frequently used, compact, or strongly authenticated MCPs direct. Put irregular long-tail servers behind MetaMCP, and promote repeated multi-step rituals into Methods.
 
+```text
+                               ┌─ direct: GitHub / Codex Apps / core runtime
+MCP client ────────────────────┤
+                               └─ MetaMCP (3 tools)
+                                    ├─ discover cached capabilities
+                                    ├─ call one lazy child
+                                    └─ run reviewed Methods
 ```
-                        ┌─── playwright (52 tools)
-                        │
-LLM ──► MetaMCP ────────┼─── fetch (3 tools)
-        (6 tools)       │
-                        ├─── sqlite (6 tools)
-                        │
-                        └─── ... N more servers
-```
 
-## Cloud Run + Agent Registry Gateway
+## When to use which path
 
-Deploy MetaMCP as a governed Cloud Run MCP gateway, register it with Google Agent Registry, and consume it from Google ADK agents with Mentu evidence for every tool call.
+| Path | Best fit | Why |
+|---|---|---|
+| Direct MCP | High-frequency, compact, security-sensitive, or foundational servers | Preserves typed schemas, native auth, and explicit approvals |
+| `mcp_discover` + `mcp_call` | Long-tail or irregular capabilities | Keeps the client surface small without hiding the assembly language |
+| `mcp_run` | Repeated Acquire → Normalize → Analyze workflows | Makes bounded behavior testable, versioned, and evidence-producing |
 
-The production path is:
+Do not route billing, infrastructure mutation, identity, or another high-consequence server through MetaMCP merely to reduce tool count. The right boundary is operational, not ideological.
 
-1. Turn 100 MCP tools into 6 MetaMCP gateway tools.
-2. Run the gateway over Streamable HTTP on Cloud Run.
-3. Mount child MCP configuration and bearer credentials from Secret Manager.
-4. Register the gateway as an external MCP server in Agent Registry.
-5. Resolve it from a Python ADK agent with `AgentRegistry.get_mcp_toolset`.
-6. Export `.metamcp/ledger.jsonl` as a hash-linked evidence bundle.
+## Quick start
+
+Requires Node.js 20 or newer.
 
 ```bash
-# 1. Configure Secret Manager and the Cloud Run service account.
-PROJECT_ID="your-project-id" scripts/gcp/setup-secrets.sh
-
-# 2. Build and deploy MetaMCP to Cloud Run.
-PROJECT_ID="your-project-id" scripts/gcp/deploy-cloud-run.sh
-
-# Include INVOKER_MEMBER when an ADK runtime should call the private gateway.
-PROJECT_ID="your-project-id" \
-INVOKER_MEMBER="serviceAccount:metamcp-adk-agent@your-project-id.iam.gserviceaccount.com" \
-scripts/gcp/deploy-cloud-run.sh
-
-# 3. Register the deployed /mcp endpoint with Agent Registry.
-PROJECT_ID="your-project-id" scripts/gcp/register-agent-registry.sh
+npx @mentu/metamcp@latest --config .mcp.json
 ```
 
-The Agent Registry tool spec lives in `gcp/agent-registry/toolspec.json`, the ADK consumer sample lives in `examples/gcp-adk-agent`, and CI/CD examples are available for Cloud Build and Azure DevOps.
-
-By default the Cloud Run service is deployed with `--no-allow-unauthenticated`. The ADK sample can send a Cloud Run identity token in `X-Serverless-Authorization` and the MetaMCP gateway token in `Authorization`.
-
-## Why MetaMCP?
-
-Every MCP server you add registers its tool schemas with the LLM. Each schema eats context tokens. At 5 servers with 20 tools each, that's ~15,000 tokens spent on schemas alone -- every single request.
-
-MetaMCP collapses all of that into 6 tools (~1,300 tokens). That cost stays constant whether you run 3 servers or 30. Less token overhead, better tool selection accuracy, more room for actual work.
-
-Beyond token savings, MetaMCP handles the things you shouldn't have to think about: connection pooling, process lifecycle, error recovery, schema caching, and transport differences between local and remote servers.
-
-## Quick Start
-
-**Install and run:**
-
-```bash
-npx @mentu/metamcp               # run directly (no install)
-npm install -g @mentu/metamcp    # or install globally
-```
-
-**Auto-configure your editor** (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, and more):
-
-```bash
-npx @mentu/metamcp init
-```
-
-**Add servers from the built-in gallery** (122 curated servers):
-
-```bash
-metamcp add playwright sentry memory postgres    # one-click, writes .mcp.json
-metamcp add --list                               # browse all available servers
-metamcp add --category search                    # filter by category
-```
-
-**Or create a `.mcp.json` manually:**
+Create `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
-    "playwright": {
+    "filesystem": {
       "command": "npx",
-      "args": ["-y", "@playwright/mcp@latest"]
+      "args": ["-y", "@modelcontextprotocol/server-filesystem@2026.7.10", "/path/to/allowed/files"]
     },
-    "sqlite": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sqlite", "/path/to/db"]
+    "internal-api": {
+      "command": "node",
+      "args": ["./servers/internal-api.js"],
+      "env": { "API_TOKEN": "${INTERNAL_API_TOKEN}" },
+      "inheritEnv": ["HTTP_PROXY"]
     }
   }
 }
 ```
 
-```bash
-metamcp --config .mcp.json
-```
+Child servers start only when explicitly refreshed, called, or used by a Method. Plain discovery reads configuration and cached schemas; it does not spawn all children.
 
-That's it. MetaMCP speaks MCP over stdio for local clients and Streamable HTTP for remote clients such as Cloud Run.
+Server names are stable cache identities and must contain 1-128 letters, numbers, dots, underscores, or hyphens; path separators and traversal-like names are rejected.
 
-**Run remote HTTP mode locally:**
+### Safe client setup
 
-```bash
-npm run build
-METAMCP_TRANSPORT=http METAMCP_CONFIG=.mcp.json PORT=8080 npm start
-curl http://localhost:8080/healthz
-```
-
-> **Note:** MetaMCP optionally uses `better-sqlite3` for semantic search. This requires a C++ compiler. If compilation fails, MetaMCP still works with keyword-only search. On macOS: `xcode-select --install`. On Linux: `apt install build-essential`.
-
-## The Tools
-
-MetaMCP gives the LLM 6 tools: 4 core tools for server management, and 2 advisory tools for skill awareness.
-
-### Core Tools
-
-#### `mcp_discover` -- Find tools
-
-Search tool catalogs across all connected servers. Without a query, returns server status and tool counts.
-
-```json
-{ "query": "screenshot" }
-```
-
-#### `mcp_provision` -- Get what you need
-
-Describe a capability and MetaMCP resolves the right server. It searches local catalogs first, then the npm registry for installable servers.
-
-```json
-{ "intent": "I need to crawl a website and extract links" }
-```
-
-#### `mcp_call` -- Use a tool
-
-Forward a tool call to a specific server. MetaMCP handles connection management and retries on crash.
-
-```json
-{ "server": "playwright", "tool": "browser_navigate", "args": { "url": "https://example.com" } }
-```
-
-#### `mcp_execute` -- Write code
-
-Run JavaScript in a V8 sandbox with access to all provisioned servers. Compose multi-step workflows, loops, and conditionals in a single call.
-
-```json
-{ "code": "const result = await servers.sqlite.call('query', { sql: 'SELECT count(*) FROM users' }); return result;" }
-```
-
-### Skill-Aware Tools
-
-Skills are methodology files (`SKILL.md`) that teach agents *how* to use MCP servers effectively. MetaMCP can discover skills and check whether their required MCP servers are available.
-
-#### `mcp_skill_discover` -- Find skills
-
-Search installed skills with MCP readiness status. Returns matching skills, their required servers, and whether those servers are connected.
-
-```json
-{ "query": "browser automation" }
-```
-
-#### `mcp_skill_advise` -- Pre-flight check
-
-Check whether a specific skill's dependencies are satisfied before using it.
-
-```json
-{ "skill": "playwright" }
-```
-
-Skills live in `~/.claude/skills/` (personal) or `.claude/skills/` (project). MetaMCP scans both locations and matches skills to their companion MCP servers via the `requires-mcp` frontmatter field.
-
-## Server Gallery
-
-MetaMCP ships with a curated gallery of 122 MCP servers across developer tools, databases, browser automation, search, security, monitoring, and more.
+`init` is preview-only unless `--yes` is supplied. Without a named client it considers existing client config files only.
 
 ```bash
-metamcp add --list                    # browse all servers
-metamcp add playwright sentry neon    # add multiple at once
-metamcp add --category databases      # filter by category
+metamcp init                         # preview, no writes
+metamcp init --client Codex          # preview one client
+metamcp init --client Codex --yes    # apply atomically and write a .bak
 ```
 
-When you add a server that has a companion skill installed, MetaMCP tells you:
+Malformed JSON is rejected and left untouched. A named client may be created explicitly; MetaMCP never creates every supported client config by default.
 
+## The three tools
+
+### Discover
+
+```json
+{ "query": "capture screenshot", "kind": "tool" }
 ```
-Added 2 server(s): playwright, sentry
 
-Companion skills detected:
-  playwright → skill: playwright
-  sentry → skill: sentry
-These skills teach agents how to use these servers effectively.
+Discovery searches only live or cached schemas. To refresh one server from its live tool list:
+
+```json
+{ "server": "browser", "refresh": true }
 ```
 
-`metamcp add --list` prints the whole gallery. See [Adding servers](https://metamcp.org/guides/adding-servers) in the docs.
+`refresh` without a server is rejected so an agent cannot accidentally fan out across the whole configuration.
 
-## Evidence Export
+### Call
 
-MetaMCP records tool activity in `.metamcp/ledger.jsonl`. You can export that append-only ledger into a hash-linked evidence bundle:
+```json
+{
+  "server": "browser",
+  "tool": "capture_page",
+  "args": { "url": "https://example.com" },
+  "timeoutMs": 60000
+}
+```
+
+MetaMCP never automatically replays a child call after a timeout or transport failure. The child may have completed a mutation before the response was lost. A later Method may retry only when its manifest explicitly declares that step `idempotency: "safe"`.
+
+### Run a Method
+
+Put JSON manifests in `.metamcp/methods/` or pass `--methods <directory>`. The child server and tool names below are illustrative; bind them to reviewed servers in your own config:
+
+```json
+{
+  "apiVersion": "metamcp.io/v1alpha1",
+  "kind": "Method",
+  "metadata": {
+    "name": "content.acquire-and-normalize",
+    "version": "1.0.0",
+    "description": "Acquire content and normalize it into a stable record"
+  },
+  "spec": {
+    "effects": "read",
+    "inputSchema": {
+      "type": "object",
+      "properties": { "url": { "type": "string" } },
+      "required": ["url"],
+      "additionalProperties": false
+    },
+    "steps": [
+      {
+        "id": "acquire",
+        "server": "fetch",
+        "tool": "fetch",
+        "args": { "url": "${input.url}" }
+      },
+      {
+        "id": "normalize",
+        "server": "content",
+        "tool": "normalize",
+        "dependsOn": ["acquire"],
+        "args": { "document": "${steps.acquire.structuredContent}" }
+      }
+    ],
+    "output": "${steps.normalize.structuredContent}"
+  }
+}
+```
+
+Then call:
+
+```json
+{ "method": "content.acquire-and-normalize", "input": { "url": "https://example.com" } }
+```
+
+Methods are declarative rather than arbitrary JavaScript. They have bounded step counts, deadlines and output sizes; input/output JSON Schemas; explicit read/write effects; safe interpolation; typed gaps; and a per-step trace. Write or mixed-effect Methods are disabled unless the gateway operator starts MetaMCP with `--allow-writes`.
+
+See [Method Mode](docs/METHOD-MODE.md), the [manifest schema](schemas/method-v1alpha1.schema.json), and the [example Method](examples/methods/content.acquire-and-normalize.method.json). The design generalizes the consistency layer documented by [Crawlio Method Mode](https://docs.crawlio.app/mcp/method-mode?utm_source=github&utm_medium=docs&utm_campaign=mcp-setup&utm_content=metamcp-method-mode&utm_term=method-mode).
+
+## Configuration and secrets
+
+`${NAME}` references in `env` and HTTP `headers` resolve from the host environment by default. An unresolved reference fails startup; it is never passed to a child as a literal placeholder.
+
+MetaMCP does not copy its ambient environment into stdio children. It inherits only a small runtime allowlist (`PATH`, home/temp/locale variables, and platform equivalents), variables named in `inheritEnv`, and values explicitly set in the child `env` block. Embedders can install a custom `SecretProvider` for a keychain or vault.
+
+Discovery is local keyword search by default. To opt into Voyage-backed semantic search, set `METAMCP_VOYAGE_API_KEY` explicitly; discovery queries will then be sent to Voyage and the optional local SQLite vector index will be enabled. Ambient `ANTHROPIC_API_KEY` or `VOYAGE_API_KEY` variables never activate network calls.
+
+Remote child servers use `url`, `transportType`, `headers`, and the existing OAuth fields:
+
+```json
+{
+  "mcpServers": {
+    "remote": {
+      "url": "https://mcp.example.com/mcp",
+      "transportType": "http",
+      "headers": { "Authorization": "Bearer ${REMOTE_TOKEN}" }
+    }
+  }
+}
+```
+
+## HTTP gateway
+
+HTTP mode binds to `127.0.0.1` by default:
 
 ```bash
-metamcp export-evidence --ledger .metamcp/ledger.jsonl --out .metamcp/evidence-bundle.json
+metamcp --transport http --port 8080 --config .mcp.json
+```
+
+An unauthenticated non-loopback bind fails closed. Configure OAuth resource-server validation or `METAMCP_HTTP_BEARER_TOKEN` before exposing the listener. Browser requests with an `Origin` header are denied unless the exact origin is supplied with `--allow-origin` or `METAMCP_ALLOWED_ORIGINS`.
+
+MetaMCP serves legacy MCP clients and the 2026-07-28 stateless request envelope over stdio and Streamable HTTP. See [Architecture](docs/ARCHITECTURE.md) for the supported boundary and deployment guidance.
+
+## Evidence
+
+Completed `mcp_call` and `mcp_run` attempts are serialized into `.metamcp/ledger.jsonl`. Export a portable hash-linked bundle:
+
+```bash
+metamcp export-evidence \
+  --ledger .metamcp/ledger.jsonl \
+  --out .metamcp/evidence-bundle.json
+
 metamcp export-evidence --out .metamcp/evidence-bundle.json --verify
 ```
 
-The bundle schema is `io.mentu.metamcp.evidence-bundle.v1`. Each entry includes the original ledger event, its previous hash, and its current SHA-256 hash so later systems can verify continuity.
+The operational ledger is not a remote attestation system. The export detects later changes inside a bundle; it does not prove that a compromised host recorded every event.
 
-## Configuration
+## Optional gallery
 
-MetaMCP reads `.mcp.json` -- the same format used by Claude Desktop and Claude Code.
+The package still ships a human-operated server gallery:
 
-**Local server:**
-
-```json
-{
-  "mcpServers": {
-    "my-server": {
-      "command": "/usr/local/bin/my-mcp-server",
-      "args": ["--port", "8080"],
-      "env": { "API_KEY": "..." }
-    }
-  }
-}
+```bash
+metamcp add --list
+metamcp add playwright sentry --config .mcp.json
 ```
 
-**Remote server (SSE):**
+The runtime never installs packages in response to an MCP tool call. Installation remains an explicit CLI/user action.
 
-```json
-{
-  "mcpServers": {
-    "remote-tools": {
-      "url": "https://mcp.example.com/sse",
-      "transportType": "sse",
-      "headers": { "Authorization": "Bearer your-token" }
-    }
-  }
-}
+## Upgrade from 0.x
+
+Version 1.0 intentionally removes the model-facing provisioning, skill-advice, and JavaScript execution tools. It also changes HTTP binding, child environment inheritance, retries, and `init`. Read [Migration to 1.0](docs/MIGRATION-1.0.md) before upgrading.
+
+## Security
+
+Child MCP servers are trusted local or remote code with their own permissions. MetaMCP is a policy and lifecycle boundary, not an OS sandbox for untrusted packages. Review commands, pin packages where appropriate, scope credentials per child, and keep dangerous direct servers behind client-side human approval.
+
+Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+
+## Development
+
+```bash
+npm ci
+npm run typecheck
+npm test
+./scripts/smoke-test.sh
 ```
 
-**Remote server (HTTP) with OAuth:**
-
-```json
-{
-  "mcpServers": {
-    "cloud-server": {
-      "url": "https://mcp.example.com/api",
-      "oauth": true
-    }
-  }
-}
-```
-
-**Server lifecycle:**
-
-```json
-{
-  "mcpServers": {
-    "database": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sqlite", "/path/to/db"],
-      "lifecycle": { "mode": "keep-alive", "idleTimeoutMs": 600000 }
-    },
-    "one-shot": {
-      "command": "/usr/local/bin/converter",
-      "lifecycle": "ephemeral"
-    }
-  }
-}
-```
-
-Three transport types: `stdio` (local, default), `http` (Streamable HTTP), and `sse` (Server-Sent Events). OAuth triggers a browser flow on first connect, with tokens saved to `~/.metamcp/oauth/`.
-
-Lifecycle controls idle behavior: `keep-alive` servers persist, `ephemeral` servers tear down immediately after use, and servers without a declaration follow the default pool timeout.
-
-### Secret resolution from the vault
-
-Hard-coding `API_KEY` strings in `.mcp.json` is the easiest way to leak credentials into git. MetaMCP supports `${KEY}` references in any `env` or `headers` value and resolves them at config load time:
-
-```json
-{
-  "mcpServers": {
-    "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" }
-    },
-    "remote-tools": {
-      "url": "https://mcp.example.com/sse",
-      "transportType": "sse",
-      "headers": { "Authorization": "Bearer ${REMOTE_TOOLS_TOKEN}" }
-    }
-  }
-}
-```
-
-Resolution order for each `${KEY}`:
-
-1. **`mentu vault`** - if a `mentu-vault` binary is present at `~/.local/bin/mentu-vault`, MetaMCP looks up the key in the macOS Keychain (or the age-encrypted file fallback). Workspace-scoped lookup is tried first when `MENTU_WORKSPACE` is set, then global. `mentu-vault` is not publicly distributed, so most users land on step 2.
-2. **`process.env`** - standard environment variable.
-3. **Literal** - if neither resolves, MetaMCP logs a warning and leaves the `${KEY}` reference in place so misconfiguration is visible instead of silent.
-
-Vault lookups are cached for the process lifetime, so resolution happens once at startup with no per-connection overhead. Inline references like `"Bearer ${TOKEN}"` and standalone `"${TOKEN}"` are both supported.
-
-If you do not use `mentu vault`, MetaMCP falls back to `process.env` automatically - no extra config needed. Just `export GITHUB_TOKEN=...` and the same `.mcp.json` works.
-
-### Secret scrubbing on the way out
-
-MetaMCP also runs an output scrubber on every tool response before it returns to the LLM. JWTs, OpenAI/GitHub/Slack/AWS tokens, and JSON-shaped credential keys (`password`, `secret`, `api_key`, `access_token`, `private_key`, `authorization`, etc.) are replaced with `[REDACTED:LABEL]`. This is best-effort defense in depth - secrets that match well-known patterns get caught even if a misconfigured downstream server echoes them in an error message.
-
-## What MetaMCP handles for you
-
-- **Connection pool** -- bounded pool with LIFO idle eviction. Servers start lazily on first use.
-- **Circuit breaker** -- per-server failure tracking. Errors are classified: auth failures (401/403) never trip the breaker, only transient errors count.
-- **Schema caching** -- tool schemas persist to disk for fast cold starts. Stale caches refresh transparently.
-- **Config import** -- `--import` discovers servers from Cursor, Claude Desktop, Claude Code, VS Code, Windsurf, Codex, and OpenCode.
-- **Hot reload** -- MetaMCP watches `.mcp.json` for changes. Add servers with `metamcp add` and they become available within 2 seconds, no restart needed.
-- **V8 sandbox** -- `mcp_execute` runs in a locked-down context. No `eval`, no `require`, no network access.
-- **Multi-transport** -- stdio, HTTP, and SSE with OAuth. The model doesn't know the difference.
-- **Skill awareness** -- discovers companion skills for MCP servers and checks readiness before invocation.
-
-## CLI
-
-| Command | Description |
-|---------|-------------|
-| `metamcp` | Start the MetaMCP server (default) |
-| `metamcp init` | Auto-configure MetaMCP in all supported MCP clients |
-| `metamcp add <server>` | Add server(s) from the gallery to `.mcp.json` |
-| `metamcp add --list` | Browse all available servers |
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--config <path>` | `.mcp.json` | Path to config file |
-| `--max-connections <n>` | `20` | Connection pool max size |
-| `--idle-timeout <ms>` | `300000` | Idle connection timeout |
-| `--failure-threshold <n>` | `5` | Circuit breaker failures before trip |
-| `--cooldown <ms>` | `30000` | Circuit breaker cooldown |
-| `--import` | off | Import configs from installed editors |
-
-## Documentation
-
-Full docs at [metamcp.org](https://metamcp.org).
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
-
-## Links
-
-- [Documentation](https://metamcp.org)
-- [npm](https://www.npmjs.com/package/@mentu/metamcp)
-- [GitHub](https://github.com/mentu-ai/metamcp)
-
-## License
-
-[Apache-2.0](LICENSE)
+Apache-2.0 licensed. Maintained by [Mentu AI](https://mentu.ai).

@@ -1,50 +1,19 @@
-import { execSync } from 'node:child_process';
-import { log } from './log.js';
+/** A secret source supplied by the host application. */
+export interface SecretProvider {
+  readonly name: string;
+  resolve(key: string): string | undefined;
+}
 
-/**
- * Vault-aware secret resolution for MetaMCP config values.
- *
- * Resolution order for ${KEY} references:
- *   1. mentu vault (macOS Keychain or age-encrypted file)
- *   2. process.env
- *   3. warning + leave literal
- *
- * All vault lookups are cached for the process lifetime.
- * Resolution happens once at config load time - no per-connection overhead.
- */
+const environmentProvider: SecretProvider = {
+  name: 'environment',
+  resolve: key => process.env[key],
+};
 
-const vaultCache = new Map<string, string | null>();
+let secretProviders: readonly SecretProvider[] = [environmentProvider];
 
-function vaultGet(key: string): string | null {
-  if (vaultCache.has(key)) return vaultCache.get(key)!;
-
-  const mentuVault = `"${process.env.HOME}/.local/bin/mentu-vault"`;
-  const workspace = process.env.MENTU_WORKSPACE;
-
-  // Try scoped first (if workspace is known)
-  if (workspace) {
-    try {
-      const value = execSync(
-        `${mentuVault} get --scope ${workspace} ${key} --raw`,
-        { encoding: 'utf-8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'] }
-      ).trim();
-      vaultCache.set(key, value);
-      return value;
-    } catch { /* fall through to global */ }
-  }
-
-  // Try global
-  try {
-    const value = execSync(
-      `${mentuVault} get ${key} --raw`,
-      { encoding: 'utf-8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'] }
-    ).trim();
-    vaultCache.set(key, value);
-    return value;
-  } catch {
-    vaultCache.set(key, null);
-    return null;
-  }
+/** Replace the provider chain. Embedders can add a keychain or vault adapter. */
+export function setSecretProviders(providers: readonly SecretProvider[]): void {
+  secretProviders = providers.length > 0 ? [...providers] : [environmentProvider];
 }
 
 /**
@@ -52,7 +21,8 @@ function vaultGet(key: string): string | null {
  * Values without ${} syntax are passed through unchanged.
  */
 export function resolveSecrets(
-  record: Record<string, string> | undefined
+  record: Record<string, string> | undefined,
+  onResolvedSecret?: (value: string) => void,
 ): Record<string, string> {
   if (!record) return {};
 
@@ -61,13 +31,23 @@ export function resolveSecrets(
   for (const [name, value] of Object.entries(record)) {
     // Replace all ${KEY} references inline (handles "Bearer ${TOKEN}" and standalone "${TOKEN}")
     if (value.includes('${')) {
-      resolved[name] = value.replace(/\$\{(\w+)\}/g, (fullMatch, refKey) => {
-        const vaultValue = vaultGet(refKey);
-        if (vaultValue) return vaultValue;
-        if (process.env[refKey]) return process.env[refKey]!;
-        log('warn', `unresolved secret: \${${refKey}}`, { field: name });
-        return fullMatch; // leave literal
+      const expanded = value.replace(/\$\{([^}]*)\}/g, (_fullMatch, refKey: string) => {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(refKey)) {
+          throw new Error(`Invalid secret reference in field ${name}`);
+        }
+        for (const provider of secretProviders) {
+          const secret = provider.resolve(refKey);
+          if (secret !== undefined) {
+            onResolvedSecret?.(secret);
+            return secret;
+          }
+        }
+        throw new Error(`Unresolved secret reference \${${refKey}} in field ${name}`);
       });
+      if (expanded.includes('${')) {
+        throw new Error(`Invalid secret reference in field ${name}`);
+      }
+      resolved[name] = expanded;
     } else {
       resolved[name] = value;
     }
@@ -76,7 +56,7 @@ export function resolveSecrets(
   return resolved;
 }
 
-/** Clear the vault cache (for testing or config reload). */
+/** Restore the default environment provider (primarily for tests). */
 export function clearVaultCache(): void {
-  vaultCache.clear();
+  secretProviders = [environmentProvider];
 }

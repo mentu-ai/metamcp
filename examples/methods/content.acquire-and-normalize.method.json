@@ -1,0 +1,46 @@
+{
+  "apiVersion": "metamcp.io/v1alpha1",
+  "kind": "Method",
+  "metadata": {
+    "name": "content.acquire-and-normalize",
+    "version": "1.0.0",
+    "description": "Acquire a document and normalize it into a stable record"
+  },
+  "spec": {
+    "effects": "read",
+    "timeoutMs": 60000,
+    "maxOutputBytes": 262144,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string", "minLength": 1 }
+      },
+      "required": ["url"],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "record": { "type": "object" }
+      },
+      "required": ["record"],
+      "additionalProperties": false
+    },
+    "steps": [
+      {
+        "id": "acquire",
+        "server": "fetch",
+        "tool": "fetch",
+        "args": { "url": "${input.url}" }
+      },
+      {
+        "id": "normalize",
+        "server": "content",
+        "tool": "normalize",
+        "dependsOn": ["acquire"],
+        "args": { "document": "${steps.acquire.structuredContent}" }
+      }
+    ],
+    "output": { "record": "${steps.normalize.structuredContent}" }
+  }
+}

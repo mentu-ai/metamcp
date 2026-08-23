@@ -1,7 +1,7 @@
 /**
  * SDK Internals Shape Guard
  *
- * Hand-rolled runner (same pattern as sandbox.test.ts).
+ * Hand-rolled test runner.
  * Import from .js extensions, run from dist/.
  *
  * McpClient.closeStdin() ends the child's stdin to shut a server down

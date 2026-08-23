@@ -6,8 +6,8 @@
  *   metamcp add --list             # print all available servers
  *   metamcp add --category search  # filter by category
  */
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, renameSync, unlinkSync } from 'node:fs';
+import { basename, dirname, resolve } from 'node:path';
 
 export interface GalleryEntry {
   name: string;
@@ -23,7 +23,7 @@ export const GALLERY: GalleryEntry[] = [
   { name: '@modelcontextprotocol/server-puppeteer', description: 'Browser automation for web scraping and interaction', repository: 'https://github.com/modelcontextprotocol/servers-archived/tree/main/src/puppeteer', category: 'Browser Automation', language: 'ts', command: 'npx', args: ["-y", "@modelcontextprotocol/server-puppeteer"] },
   { name: '@modelcontextprotocol/server-memory', description: 'Knowledge graph-based persistent memory system for maintaining context', repository: 'https://github.com/modelcontextprotocol/servers-archived/tree/main/src/memory', category: 'Knowledge & Memory', language: 'ts', command: 'npx', args: ["-y", "@modelcontextprotocol/server-memory"] },
   { name: '@modelcontextprotocol/server-filesystem', description: 'Direct local file system access.', repository: 'https://github.com/modelcontextprotocol/servers-archived/tree/main/src/filesystem', category: 'File Systems', language: 'ts', command: 'npx', args: ["-y", "@modelcontextprotocol/server-filesystem"] },
-  { name: '@modelcontextprotocol/server-fetch', description: 'Efficient web content fetching and processing for AI consumption', repository: 'https://github.com/modelcontextprotocol/servers-archived/tree/main/src/fetch', category: 'Search & Data Extraction', language: 'py', command: 'uvx', args: ["@modelcontextprotocol/server-fetch"] },
+  { name: 'mcp-server-fetch', description: 'Efficient web content fetching and processing for AI consumption', repository: 'https://github.com/modelcontextprotocol/servers-archived/tree/main/src/fetch', category: 'Search & Data Extraction', language: 'py', command: 'uvx', args: ["mcp-server-fetch"] },
   { name: '@modelcontextprotocol/server-git', description: 'Direct Git repository operations including reading, searching, and analyzing local repositories', repository: 'https://github.com/modelcontextprotocol/servers-archived/tree/main/src/git', category: 'Version Control', language: 'py', command: 'uvx', args: ["@modelcontextprotocol/server-git"] },
   { name: '@modelcontextprotocol/server-postgres', description: 'PostgreSQL database integration with schema inspection and query capabilities', repository: 'https://github.com/modelcontextprotocol/servers-archived/tree/main/src/postgres', category: 'Databases', language: 'ts', command: 'npx', args: ["-y", "@modelcontextprotocol/server-postgres"] },
   { name: '@modelcontextprotocol/server-gitlab', description: 'GitLab platform integration for project management and CI/CD operations', repository: 'https://github.com/modelcontextprotocol/servers-archived/tree/main/src/gitlab', category: 'Version Control', language: 'ts', command: 'npx', args: ["-y", "@modelcontextprotocol/server-gitlab"] },
@@ -147,7 +147,8 @@ export const GALLERY: GalleryEntry[] = [
 
 
 interface McpJsonFile {
-  mcpServers?: Record<string, { command?: string; args?: string[]; env?: Record<string, string> }>;
+  mcpServers?: Record<string, unknown>;
+  [key: string]: unknown;
 }
 
 function deriveServerKey(name: string): string {
@@ -175,7 +176,8 @@ function deriveServerKey(name: string): string {
     || name;
 }
 
-export async function runGalleryAdd(args: string[]): Promise<void> {
+export async function runGalleryAdd(args: string[]): Promise<boolean> {
+  validateGalleryArgs(args);
   const listMode = args.includes('--list') || args.includes('-l');
   const jsonMode = args.includes('--json');
   const catIdx = args.indexOf('--category');
@@ -217,7 +219,7 @@ export async function runGalleryAdd(args: string[]): Promise<void> {
       }
       process.stderr.write(`\n  ${entries.length} servers available. Usage: metamcp add <name> [<name>...]\n\n`);
     }
-    return;
+    return true;
   }
 
   // Find matches
@@ -240,22 +242,41 @@ export async function runGalleryAdd(args: string[]): Promise<void> {
     process.stderr.write(`No match for "${query}"\n`);
   }
 
-  if (matched.length === 0) { process.exit(1); }
+  if (matched.length === 0) return false;
+
+  const provisionable = matched.filter(entry => {
+    if (entry.command && entry.args?.length) return true;
+    process.stderr.write(`Gallery entry "${entry.name}" is metadata-only and cannot be provisioned automatically\n`);
+    return false;
+  });
+  if (provisionable.length === 0) return false;
 
   // Load or create .mcp.json
   const cfgPath = configPath ? resolve(configPath) : resolve(process.cwd(), '.mcp.json');
   let config: McpJsonFile = { mcpServers: {} };
   if (existsSync(cfgPath)) {
-    try { config = JSON.parse(readFileSync(cfgPath, 'utf-8')) as McpJsonFile; } catch { /* fresh */ }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(cfgPath, 'utf-8'));
+    } catch (err) {
+      throw new Error(`Refusing to replace invalid JSON in ${cfgPath}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (!isRecord(parsed)) {
+      throw new Error(`Refusing to replace invalid JSON in ${cfgPath}: top-level value must be an object`);
+    }
+    config = parsed;
   }
-  if (!config.mcpServers) config.mcpServers = {};
+  if (config.mcpServers === undefined) config.mcpServers = {};
+  if (!isRecord(config.mcpServers)) {
+    throw new Error(`Refusing to replace invalid JSON in ${cfgPath}: mcpServers must be an object`);
+  }
 
   const added: string[] = [];
   const skipped: string[] = [];
 
-  for (const entry of matched) {
+  for (const entry of provisionable) {
     const key = deriveServerKey(entry.name);
-    if (config.mcpServers[key]) {
+    if (Object.prototype.hasOwnProperty.call(config.mcpServers, key)) {
       skipped.push(key);
       continue;
     }
@@ -266,7 +287,7 @@ export async function runGalleryAdd(args: string[]): Promise<void> {
     added.push(key);
   }
 
-  writeFileSync(cfgPath, JSON.stringify(config, null, 2) + '\n');
+  writeConfigAtomic(cfgPath, JSON.stringify(config, null, 2) + '\n');
 
   // Check for companion skills
   const skillHints: string[] = [];
@@ -293,5 +314,37 @@ export async function runGalleryAdd(args: string[]): Promise<void> {
       process.stderr.write(`These skills teach agents how to use these servers effectively.\n`);
     }
     process.stderr.write(`Config: ${cfgPath}\n`);
+  }
+  return true;
+}
+
+function validateGalleryArgs(args: string[]): void {
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === '--list' || arg === '-l' || arg === '--json') continue;
+    if (arg === '--category' || arg === '--config') {
+      const value = args[index + 1];
+      if (!value || value.startsWith('--')) throw new Error(`${arg} requires a value`);
+      index++;
+      continue;
+    }
+    if (arg.startsWith('-')) throw new Error(`Unknown add option: ${arg}`);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function writeConfigAtomic(filePath: string, content: string): void {
+  mkdirSync(dirname(filePath), { recursive: true });
+  if (existsSync(filePath)) copyFileSync(filePath, `${filePath}.bak`);
+  const temporary = resolve(dirname(filePath), `.${basename(filePath)}.metamcp-${process.pid}-${Date.now()}`);
+  try {
+    writeFileSync(temporary, content, { encoding: 'utf-8', mode: 0o600 });
+    renameSync(temporary, filePath);
+  } catch (err) {
+    try { unlinkSync(temporary); } catch { /* no temporary file to remove */ }
+    throw err;
   }
 }

@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readFileSync, watch, existsSync, writeFileSync, statSync } from 'node:fs';
-import { resolve, dirname, basename } from 'node:path';
+import { readFileSync, watch, existsSync, statSync, realpathSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -21,16 +21,13 @@ import {
 import { loadConfig } from './config.js';
 import { discoverExternalServers } from './config-imports.js';
 import { ChildManager } from './child-manager.js';
-import { IntentRouter } from './intent.js';
-import { TrustPolicy } from './trust.js';
 import { log } from './log.js';
-import { execute as sandboxExecute } from './sandbox.js';
 import { recordLedger } from './ledger.js';
-import { VectorStore } from './vector-store.js';
-import { Embedder } from './embedder.js';
+import type { VectorStore } from './vector-store.js';
+import { AnthropicEmbedderProvider, Embedder } from './embedder.js';
 import type { ServerConfig } from './types.js';
-import { SkillCatalog } from './skill-catalog.js';
-import { scrubSecrets } from './secret-scrubber.js';
+import { registerSecretValues, scrubSecrets, scrubValue } from './secret-scrubber.js';
+import { MethodRegistry, MethodRunner } from './methods.js';
 
 // --- CLI argument parsing ---
 
@@ -45,6 +42,9 @@ interface CliOptions {
   failureThreshold: number;
   cooldown: number;
   importEditors: boolean;
+  methodsDir: string;
+  allowWrites: boolean;
+  allowedOrigins: string[];
 }
 
 function readPackageVersion(): string {
@@ -61,13 +61,14 @@ function printHelp(): void {
   const help = `metamcp - Meta-MCP server, OS for MCP servers
 
 Usage: metamcp [options]
-       metamcp init [--yes] [--json]
+       metamcp init [--yes] [--client <name>] [--json]
        metamcp add <server> [<server>...] [--config <path>]
        metamcp add --list [--category <name>] [--json]
 
 Commands:
-  init                       Auto-configure MetaMCP in all supported MCP clients
-    --yes                    Non-interactive mode (skip confirmation prompts)
+  init                       Preview setup for detected MCP clients
+    --yes                    Apply the previewed changes (writes backups atomically)
+    --client <name>          Target one client; repeat to target several
     --json                   Output structured JSON result
   add <server>               Add server(s) from the gallery to .mcp.json
     --list, -l               List all available servers
@@ -78,7 +79,7 @@ Commands:
 Options:
   --config <path>            Path to .mcp.json (default: .mcp.json)
   --transport <stdio|http>   Inbound transport (default: stdio; env METAMCP_TRANSPORT)
-  --host <host>              HTTP host when --transport http (default: 0.0.0.0)
+  --host <host>              HTTP host when --transport http (default: 127.0.0.1)
   --port <port>              HTTP port when --transport http (default: env PORT or 8080)
   --http-path <path>         Streamable HTTP MCP path (default: /mcp)
   --max-connections <n>      Pool max connections (default: 20)
@@ -86,6 +87,9 @@ Options:
   --failure-threshold <n>    Circuit breaker consecutive failures (default: 5)
   --cooldown <ms>            Circuit breaker cooldown in ms (default: 30000)
   --import                   Auto-discover servers from installed editors
+  --methods <directory>      Method manifests directory (default: .metamcp/methods)
+  --allow-writes             Allow Methods declaring write or mixed effects
+  --allow-origin <origin>    Allow an exact browser Origin in HTTP mode (repeatable)
   --help                     Show this help message
   --version                  Show version number
 `;
@@ -96,7 +100,7 @@ function parseArgs(argv: string[]): CliOptions {
   const opts: CliOptions = {
     configPath: process.env.METAMCP_CONFIG,
     transport: process.env.METAMCP_TRANSPORT === 'http' ? 'http' : 'stdio',
-    host: process.env.HOST ?? '0.0.0.0',
+    host: process.env.HOST ?? '127.0.0.1',
     port: Number(process.env.PORT ?? '8080'),
     httpPath: process.env.METAMCP_HTTP_PATH ?? '/mcp',
     maxConnections: 20,
@@ -104,6 +108,9 @@ function parseArgs(argv: string[]): CliOptions {
     failureThreshold: 5,
     cooldown: 30_000,
     importEditors: false,
+    methodsDir: process.env.METAMCP_METHODS_DIR ?? resolve(process.cwd(), '.metamcp', 'methods'),
+    allowWrites: process.env.METAMCP_ALLOW_WRITES === '1',
+    allowedOrigins: (process.env.METAMCP_ALLOWED_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean),
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -118,10 +125,12 @@ function parseArgs(argv: string[]): CliOptions {
         process.exit(0);
         break;
       case '--config':
-        opts.configPath = argv[++i];
+        opts.configPath = requireOptionValue(argv, i, arg);
+        i++;
         break;
       case '--transport': {
-        const transport = argv[++i];
+        const transport = requireOptionValue(argv, i, arg);
+        i++;
         if (transport !== 'stdio' && transport !== 'http') {
           process.stderr.write(`Invalid transport: ${transport}\n`);
           process.exit(1);
@@ -130,28 +139,46 @@ function parseArgs(argv: string[]): CliOptions {
         break;
       }
       case '--host':
-        opts.host = argv[++i];
+        opts.host = requireOptionValue(argv, i, arg);
+        i++;
         break;
       case '--port':
-        opts.port = Number(argv[++i]);
+        opts.port = Number(requireOptionValue(argv, i, arg));
+        i++;
         break;
       case '--http-path':
-        opts.httpPath = normalizeHttpPath(argv[++i]);
+        opts.httpPath = normalizeHttpPath(requireOptionValue(argv, i, arg));
+        i++;
         break;
       case '--max-connections':
-        opts.maxConnections = Number(argv[++i]);
+        opts.maxConnections = Number(requireOptionValue(argv, i, arg));
+        i++;
         break;
       case '--idle-timeout':
-        opts.idleTimeout = Number(argv[++i]);
+        opts.idleTimeout = Number(requireOptionValue(argv, i, arg));
+        i++;
         break;
       case '--failure-threshold':
-        opts.failureThreshold = Number(argv[++i]);
+        opts.failureThreshold = Number(requireOptionValue(argv, i, arg));
+        i++;
         break;
       case '--cooldown':
-        opts.cooldown = Number(argv[++i]);
+        opts.cooldown = Number(requireOptionValue(argv, i, arg));
+        i++;
         break;
       case '--import':
         opts.importEditors = true;
+        break;
+      case '--methods':
+        opts.methodsDir = requireOptionValue(argv, i, arg);
+        i++;
+        break;
+      case '--allow-writes':
+        opts.allowWrites = true;
+        break;
+      case '--allow-origin':
+        opts.allowedOrigins.push(requireOptionValue(argv, i, arg));
+        i++;
         break;
       default:
         process.stderr.write(`Unknown option: ${arg}\n`);
@@ -160,7 +187,45 @@ function parseArgs(argv: string[]): CliOptions {
     }
   }
 
+  if (!opts.configPath && process.env.METAMCP_CONFIG === '') opts.configPath = undefined;
+  if (!opts.methodsDir) throw new Error('--methods requires a directory');
+  if (!Number.isInteger(opts.port) || opts.port < 0 || opts.port > 65535) {
+    throw new Error('--port must be an integer from 0 to 65535');
+  }
+  if (!Number.isInteger(opts.maxConnections) || opts.maxConnections < 1 || opts.maxConnections > 1024) {
+    throw new Error('--max-connections must be an integer from 1 to 1024');
+  }
+  if (!Number.isInteger(opts.idleTimeout) || opts.idleTimeout < 1) {
+    throw new Error('--idle-timeout must be a positive integer');
+  }
+  if (!Number.isInteger(opts.failureThreshold) || opts.failureThreshold < 1) {
+    throw new Error('--failure-threshold must be a positive integer');
+  }
+  if (!Number.isInteger(opts.cooldown) || opts.cooldown < 0) {
+    throw new Error('--cooldown must be a non-negative integer');
+  }
+  if (!opts.host.trim()) {
+    throw new Error('--host must be non-empty');
+  }
+  for (const origin of opts.allowedOrigins) {
+    let parsed: URL;
+    try {
+      parsed = new URL(origin);
+    } catch {
+      throw new Error(`Invalid allowed Origin: ${origin}`);
+    }
+    if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.origin !== origin) {
+      throw new Error(`Allowed Origin must be an exact http(s) origin without a path: ${origin}`);
+    }
+  }
+
   return opts;
+}
+
+function requireOptionValue(argv: string[], index: number, option: string): string {
+  const value = argv[index + 1];
+  if (!value || value.startsWith('--')) throw new Error(`${option} requires a value`);
+  return value;
 }
 
 function normalizeHttpPath(path: string): string {
@@ -168,21 +233,51 @@ function normalizeHttpPath(path: string): string {
   return path.startsWith('/') ? path : `/${path}`;
 }
 
+function parseInitOptions(args: string[]): { yes: boolean; json: boolean; clients: string[] } {
+  const options = { yes: false, json: false, clients: [] as string[] };
+  for (let index = 0; index < args.length; index++) {
+    switch (args[index]) {
+      case '--yes':
+        options.yes = true;
+        break;
+      case '--json':
+        options.json = true;
+        break;
+      case '--client':
+        options.clients.push(requireOptionValue(args, index, '--client'));
+        index++;
+        break;
+      default:
+        throw new Error(`Unknown init option: ${args[index]}`);
+    }
+  }
+  return options;
+}
+
 // --- Subcommand: init ---
 if (process.argv[2] === 'init') {
   const { runInit } = await import('./init.js');
-  await runInit({
-    yes: process.argv.includes('--yes'),
-    json: process.argv.includes('--json'),
-  });
-  process.exit(0);
+  let options: ReturnType<typeof parseInitOptions>;
+  try {
+    options = parseInitOptions(process.argv.slice(3));
+  } catch (err) {
+    process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  }
+  const result = await runInit(options);
+  process.exit(result.success ? 0 : 1);
 }
 
 // --- Subcommand: add ---
 if (process.argv[2] === 'add') {
   const { runGalleryAdd } = await import('./gallery.js');
-  await runGalleryAdd(process.argv.slice(3));
-  process.exit(0);
+  try {
+    const success = await runGalleryAdd(process.argv.slice(3));
+    process.exit(success ? 0 : 1);
+  } catch (err) {
+    process.stderr.write(`Error: ${errorMessage(err)}\n`);
+    process.exit(1);
+  }
 }
 
 // --- Subcommand: export-evidence ---
@@ -192,18 +287,30 @@ if (process.argv[2] === 'export-evidence') {
   process.exit(0);
 }
 
-const cliOptions = parseArgs(process.argv);
+const cliOptions = (() => {
+  try {
+    return parseArgs(process.argv);
+  } catch (err) {
+    process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  }
+})();
 
 let vectorStore: VectorStore | undefined;
-try {
-  vectorStore = new VectorStore();
-} catch (err) {
-  log('warn', 'vector store unavailable - semantic search disabled', {
-    error: err instanceof Error ? err.message : String(err),
-  });
+let embedder: Embedder | undefined;
+const embeddingKey = process.env.METAMCP_VOYAGE_API_KEY;
+if (embeddingKey) {
+  registerSecretValues([embeddingKey]);
+  try {
+    const { VectorStore: LoadedVectorStore } = await import('./vector-store.js');
+    vectorStore = new LoadedVectorStore();
+    embedder = new Embedder(new AnthropicEmbedderProvider(embeddingKey));
+  } catch (err) {
+    log('warn', 'semantic search unavailable - continuing with local keyword search', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
-
-const embedder = new Embedder();
 
 const childManager = new ChildManager(
   {
@@ -215,10 +322,13 @@ const childManager = new ChildManager(
   },
   { vectorStore, embedder },
 );
-const intentRouter = new IntentRouter();
-const trustPolicy = new TrustPolicy();
-const skillCatalog = new SkillCatalog();
 let serverConfigs: ServerConfig[] = [];
+const methodRegistry = new MethodRegistry(cliOptions.methodsDir);
+const methodRunner = new MethodRunner(
+  methodRegistry,
+  (server, tool, args, options) => callConfiguredChild(server, tool, args, options.timeoutMs),
+  cliOptions.allowWrites,
+);
 const stdioServer = createMetaMcpServer();
 
 function createMetaMcpServer(): Server {
@@ -228,81 +338,52 @@ function createMetaMcpServer(): Server {
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
-    tools: [
-      {
-        name: 'mcp_discover',
-        description: 'Search tool catalogs across all child MCP servers + list server status. If no query, returns server list with status and tool counts.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            query: { type: 'string', description: 'Search query for tools' },
-            server: { type: 'string', description: 'Filter to a specific server' },
+    return {
+      tools: [
+        {
+          name: 'mcp_discover',
+          description: 'Search configured servers, cached child tool schemas, and declarative Methods without starting every child. Set refresh=true with a specific server to refresh only that server.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              query: { type: 'string', description: 'Capability search query' },
+              kind: { type: 'string', enum: ['all', 'server', 'tool', 'method'], description: 'Result kind (default: all)' },
+              server: { type: 'string', description: 'Filter child tools to one configured server' },
+              refresh: { type: 'boolean', description: 'Connect to the named server and refresh its live schemas' },
+            },
+            additionalProperties: false,
           },
         },
-      },
-      {
-        name: 'mcp_provision',
-        description: 'Intent-based provisioning. Describe what you need, MetaMCP resolves and provisions the right server.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            intent: { type: 'string', description: 'What capability you need' },
-            context: { type: 'string', description: 'Additional context for resolution' },
-            autoProvision: { type: 'boolean', description: 'Auto-provision if trusted (default: false)' },
+        {
+          name: 'mcp_call',
+          description: 'Call one explicitly named child tool. The target starts lazily. Calls are never replayed implicitly after a timeout or transport failure.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              server: { type: 'string', description: 'Configured child server name' },
+              tool: { type: 'string', description: 'Child tool name' },
+              args: { type: 'object', description: 'Arguments passed to the child tool' },
+              timeoutMs: { type: 'integer', minimum: 1, maximum: 600000, description: 'Optional per-call deadline' },
+            },
+            required: ['server', 'tool'],
+            additionalProperties: false,
           },
-          required: ['intent'],
         },
-      },
-      {
-        name: 'mcp_call',
-        description: 'Forward a tool call to a specific child MCP server. Retries once on crash.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            server: { type: 'string', description: 'Target server name' },
-            tool: { type: 'string', description: 'Tool name to call' },
-            args: { type: 'object', description: 'Arguments to pass to the tool' },
+        {
+          name: 'mcp_run',
+          description: 'Run a reviewed declarative Method: a bounded, schema-validated sequence of lazy child calls with typed gaps and trace evidence.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              method: { type: 'string', description: 'Registered Method name' },
+              input: { type: 'object', description: 'Method input validated against its JSON Schema' },
+            },
+            required: ['method', 'input'],
+            additionalProperties: false,
           },
-          required: ['server', 'tool'],
         },
-      },
-      {
-        name: 'mcp_execute',
-        description: 'Code-mode execution in V8 sandbox. Access provisioned servers via `servers.<name>.call(tool, args)`. Supports async/await, sleep(ms), console.log.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            code: { type: 'string', description: 'Code to execute' },
-          },
-          required: ['code'],
-        },
-      },
-      {
-        name: 'mcp_skill_discover',
-        description: 'Search Claude Code skills with MCP readiness status. Returns skills matching query with their required MCP servers and availability.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            query: { type: 'string', description: 'Search query for skills' },
-            domain: { type: 'string', description: 'Filter by domain (e.g. browser_automation, monitoring)' },
-          },
-          required: ['query'],
-        },
-      },
-      {
-        name: 'mcp_skill_advise',
-        description: 'Pre-flight readiness check for a skill. Returns MCP server availability and recommendations.',
-        inputSchema: {
-          type: 'object' as const,
-          properties: {
-            skill: { type: 'string', description: 'Skill name to check' },
-          },
-          required: ['skill'],
-        },
-      },
-    ],
-  };
+      ],
+    };
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -312,16 +393,10 @@ function createMetaMcpServer(): Server {
     switch (name) {
       case 'mcp_discover':
         return handleDiscover(args);
-      case 'mcp_provision':
-        return handleProvision(args);
       case 'mcp_call':
         return handleCall(args);
-      case 'mcp_execute':
-        return handleExecute(args);
-      case 'mcp_skill_discover':
-        return handleSkillDiscover(args);
-      case 'mcp_skill_advise':
-        return handleSkillAdvise(args);
+      case 'mcp_run':
+        return handleRun(args);
       default:
         return {
           content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }],
@@ -330,17 +405,8 @@ function createMetaMcpServer(): Server {
     }
   })();
 
-  // Scrub known secret patterns from any text content before it leaves the process.
-  // This is the chokepoint - every tool response passes through here.
-  if (result && Array.isArray((result as { content?: unknown[] }).content)) {
-    const r = result as { content: Array<{ type: string; text?: string } & Record<string, unknown>> };
-    r.content = r.content.map(c =>
-      c.type === 'text' && typeof c.text === 'string'
-        ? { ...c, text: scrubSecrets(c.text) }
-        : c
-    );
-  }
-  return result;
+    // Every text and structured field crosses one recursive redaction boundary.
+    return scrubValue(result) as typeof result;
   });
 
   return server;
@@ -349,113 +415,61 @@ function createMetaMcpServer(): Server {
 async function handleDiscover(args?: Record<string, unknown>) {
   const query = args?.query as string | undefined;
   const serverFilter = args?.server as string | undefined;
+  const kind = (args?.kind as string | undefined) ?? 'all';
+  const refresh = args?.refresh === true;
 
-  // Lazy spawn: ensure all configured servers are connected
-  await ensureAllConnected();
-
-  if (!query) {
-    // Return server list with status and tool counts
-    const states = childManager.getAllStates();
-    const result = states.map(s => ({
-      name: s.name,
-      state: s.state,
-      toolCount: s.toolCount,
-      criticality: s.criticality,
-    }));
-    return {
-      content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-    };
+  if (!['all', 'server', 'tool', 'method'].includes(kind)) {
+    return toolError('kind must be one of: all, server, tool, method');
+  }
+  if (serverFilter && !serverConfigs.some(config => config.name === serverFilter)) {
+    return toolError(`Unknown server: ${serverFilter}`);
+  }
+  if (refresh && !serverFilter) {
+    return toolError('refresh requires a specific server; MetaMCP never fans out implicitly');
+  }
+  if (refresh && serverFilter) {
+    try {
+      await refreshConfiguredChild(serverFilter);
+    } catch (err) {
+      return toolError(`Failed to refresh ${serverFilter}: ${errorMessage(err)}`);
+    }
   }
 
   const catalog = childManager.getCatalog();
-  const matches = await catalog.search(query, serverFilter);
-  const result = matches.map(m => ({
-    tool: m.tool.name,
-    server: m.tool.server,
-    description: m.tool.description,
-    score: m.score,
-    confidence: Math.round(m.confidence * 100) / 100,
-  }));
+  const servers = kind === 'all' || kind === 'server'
+    ? serverConfigs
+      .filter(config => !serverFilter || config.name === serverFilter)
+      .filter(config => !query || config.name.toLowerCase().includes(query.toLowerCase()))
+      .map(config => {
+        const live = childManager.getServerState(config.name);
+        const cachedTools = catalog.getServerTools(config.name);
+        const liveSchema = live?.state === 'idle' || live?.state === 'active';
+        return {
+          name: config.name,
+          state: live?.state ?? 'configured',
+          toolCount: live?.toolCount ?? cachedTools.length,
+          schemaSource: liveSchema ? 'live' : cachedTools.length > 0 ? 'cache' : 'unknown',
+          transport: config.transport ?? 'stdio',
+        };
+      })
+    : [];
+  const tools = (kind === 'all' || kind === 'tool') && query
+    ? (await catalog.search(query, serverFilter)).map(match => ({
+      tool: match.tool.name,
+      server: match.tool.server,
+      description: match.tool.description,
+      confidence: Math.round(match.confidence * 100) / 100,
+      schemaSource: ['idle', 'active'].includes(childManager.getServerState(match.tool.server)?.state ?? '') ? 'live' : 'cache',
+    }))
+    : [];
+  const methods = kind === 'all' || kind === 'method'
+    ? query ? methodRegistry.search(query) : methodRegistry.list()
+    : [];
+  const result = { servers, tools, methods };
 
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-  };
-}
-
-async function handleProvision(args?: Record<string, unknown>) {
-  const intent = args?.intent as string;
-  const context = args?.context as string | undefined;
-  const autoProvision = (args?.autoProvision as boolean) ?? false;
-
-  if (!intent) {
-    return {
-      content: [{ type: 'text' as const, text: 'Missing required parameter: intent' }],
-      isError: true,
-    };
-  }
-
-  // Ensure connected for local catalog search
-  await ensureAllConnected();
-
-  const catalog = childManager.getCatalog();
-  const result = await intentRouter.resolve(intent, catalog, context);
-
-  // If local matches found, return them
-  if (result.source === 'local' || result.localMatches.length > 0) {
-    const tools = result.localMatches.map(m => ({
-      tool: m.tool.name,
-      server: m.tool.server,
-      description: m.tool.description,
-      confidence: Math.round(m.confidence * 100) / 100,
-    }));
-    return {
-      content: [{ type: 'text' as const, text: JSON.stringify({ source: 'local', tools }, null, 2) }],
-    };
-  }
-
-  // Registry matches - check trust for auto-provisioning
-  if (result.registryMatches.length > 0) {
-    const matches = result.registryMatches.map(entry => {
-      const confidence = computeRegistryConfidence(intent, entry.name, entry.description);
-
-      if (autoProvision) {
-        const decision = trustPolicy.evaluate(entry.name, confidence);
-        return {
-          name: entry.name,
-          description: entry.description,
-          confidence: Math.round(confidence * 100) / 100,
-          trusted: decision.trusted,
-          autoProvisionable: decision.decision === 'allow',
-          installCommand: `npx -y ${entry.name}`,
-        };
-      }
-
-      log('info', 'provision available', {
-        package: entry.name,
-        installCommand: `npx -y ${entry.name}`,
-      });
-
-      return {
-        name: entry.name,
-        description: entry.description,
-        confidence: Math.round(confidence * 100) / 100,
-        installCommand: `npx -y ${entry.name}`,
-      };
-    });
-
-    return {
-      content: [{
-        type: 'text' as const,
-        text: JSON.stringify({ source: 'registry', matches }, null, 2),
-      }],
-    };
-  }
-
-  return {
-    content: [{
-      type: 'text' as const,
-      text: JSON.stringify({ source: 'none', message: 'No matching servers found' }, null, 2),
-    }],
+    structuredContent: result,
   };
 }
 
@@ -463,50 +477,33 @@ async function handleCall(args?: Record<string, unknown>) {
   const serverName = args?.server as string;
   const toolName = args?.tool as string;
   const toolArgs = args?.args as Record<string, unknown> | undefined;
+  const timeoutMs = args?.timeoutMs as number | undefined;
 
   if (!serverName || !toolName) {
-    return {
-      content: [{ type: 'text' as const, text: 'Missing required parameters: server, tool' }],
-      isError: true,
-    };
+    return toolError('Missing required parameters: server, tool');
   }
-
-  // Check if server is configured
-  if (!childManager.hasServer(serverName)) {
-    // Try to find and spawn it from config
-    const config = serverConfigs.find(c => c.name === serverName);
-    if (config) {
-      try {
-        await childManager.spawn(config);
-      } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `Failed to connect to server ${serverName}: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
-      }
-    } else {
-      return {
-        content: [{ type: 'text' as const, text: `Unknown server: ${serverName}` }],
-        isError: true,
-      };
-    }
+  if (toolArgs !== undefined && (!toolArgs || typeof toolArgs !== 'object' || Array.isArray(toolArgs))) {
+    return toolError('args must be an object');
+  }
+  if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 600_000)) {
+    return toolError('timeoutMs must be an integer from 1 to 600000');
+  }
+  if (!serverConfigs.some(config => config.name === serverName)) {
+    return toolError(`Unknown server: ${serverName}`);
   }
 
   const startTime = Date.now();
   try {
-    const result = await childManager.callTool(serverName, toolName, toolArgs);
-    recordLedger({
-      timestamp: new Date().toISOString(),
+    const result = await callConfiguredChild(serverName, toolName, toolArgs, timeoutMs);
+    const childReportedError = isRecord(result) && result.isError === true;
+    await recordGatewayCall({
       tool: 'mcp_call',
       server: serverName,
       childTool: toolName,
-      duration_ms: Date.now() - startTime,
-      success: true,
+      durationMs: Date.now() - startTime,
+      success: !childReportedError,
+      ...(childReportedError ? { error: 'Child tool returned an error result' } : {}),
     });
-    // Return result verbatim
     if (typeof result === 'object' && result !== null && 'content' in result) {
       return result as { content: Array<{ type: 'text'; text: string }> };
     }
@@ -514,197 +511,145 @@ async function handleCall(args?: Record<string, unknown>) {
       content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
     };
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    recordLedger({
-      timestamp: new Date().toISOString(),
+    const errorMsg = errorMessage(err);
+    await recordGatewayCall({
       tool: 'mcp_call',
       server: serverName,
       childTool: toolName,
-      duration_ms: Date.now() - startTime,
+      durationMs: Date.now() - startTime,
       success: false,
       error: errorMsg,
     });
-    return {
-      content: [{
-        type: 'text' as const,
-        text: `Error calling ${toolName} on ${serverName}: ${errorMsg}`,
-      }],
-      isError: true,
-    };
+    return toolError(`Error calling ${toolName} on ${serverName}: ${errorMsg}`);
   }
 }
 
-async function handleExecute(args?: Record<string, unknown>) {
-  const code = args?.code as string;
-  if (!code) {
-    return {
-      content: [{ type: 'text' as const, text: 'Missing required parameter: code' }],
-      isError: true,
-    };
+async function handleRun(args?: Record<string, unknown>) {
+  const method = args?.method as string | undefined;
+  const input = args?.input;
+  if (!method) return toolError('Missing required parameter: method');
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return toolError('input must be an object');
   }
-
-  await ensureAllConnected();
-  const catalog = childManager.getCatalog();
 
   const startTime = Date.now();
   try {
-    const result = await sandboxExecute(code, childManager, catalog);
-    recordLedger({
-      timestamp: new Date().toISOString(),
-      tool: 'mcp_execute',
+    const result = await methodRunner.run(method, input as Record<string, unknown>);
+    await recordGatewayCall({
+      tool: 'mcp_run',
       server: null,
-      duration_ms: Date.now() - startTime,
+      durationMs: Date.now() - startTime,
       success: true,
     });
-    const parts: string[] = [];
-    if (result.console.length > 0) {
-      parts.push(result.console.join('\n'));
-    }
-    if (result.value !== undefined) {
-      parts.push(typeof result.value === 'string' ? result.value : JSON.stringify(result.value, null, 2));
-    }
     return {
-      content: [{ type: 'text' as const, text: parts.join('\n') || '(no output)' }],
+      content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+      structuredContent: result,
     };
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    recordLedger({
-      timestamp: new Date().toISOString(),
-      tool: 'mcp_execute',
+    const errorMsg = errorMessage(err);
+    await recordGatewayCall({
+      tool: 'mcp_run',
       server: null,
-      duration_ms: Date.now() - startTime,
+      durationMs: Date.now() - startTime,
       success: false,
       error: errorMsg,
     });
-    return {
-      content: [{
-        type: 'text' as const,
-        text: `mcp_execute error: ${errorMsg}`,
-      }],
-      isError: true,
-    };
+    return toolError(`Method ${method} failed: ${errorMsg}`);
   }
 }
 
-function serverChecker(serverName: string): { available: boolean; state: string } {
-  if (childManager.hasServer(serverName)) {
-    return { available: true, state: 'connected' };
+async function connectConfiguredChild(serverName: string): Promise<void> {
+  const config = serverConfigs.find(candidate => candidate.name === serverName);
+  if (!config) throw new Error(`Unknown server: ${serverName}`);
+  if (!childManager.hasServer(serverName)) {
+    await childManager.spawn(config);
+    return;
   }
-  const configured = serverConfigs.some(c => c.name === serverName);
+  await childManager.ensureConnected(serverName);
+}
+
+async function refreshConfiguredChild(serverName: string): Promise<void> {
+  const config = serverConfigs.find(candidate => candidate.name === serverName);
+  if (!config) throw new Error(`Unknown server: ${serverName}`);
+  if (!childManager.hasServer(serverName)) {
+    await childManager.spawn(config);
+    return;
+  }
+  await childManager.refreshSchemas(serverName);
+}
+
+async function callConfiguredChild(
+  serverName: string,
+  toolName: string,
+  args?: Record<string, unknown>,
+  timeoutMs?: number,
+): Promise<unknown> {
+  await connectConfiguredChild(serverName);
+  return childManager.callTool(serverName, toolName, args, { timeoutMs });
+}
+
+function toolError(message: string) {
   return {
-    available: false,
-    state: configured ? 'configured_not_spawned' : 'not_configured',
+    content: [{ type: 'text' as const, text: message }],
+    isError: true,
   };
 }
 
-async function handleSkillDiscover(args?: Record<string, unknown>) {
-  const query = args?.query as string;
-  const domain = args?.domain as string | undefined;
-
-  if (!query) {
-    // List all skills with readiness
-    const all = skillCatalog.all().map(s => {
-      const advice = skillCatalog.advise(s.name, serverChecker);
-      return {
-        skill: s.name,
-        description: s.description,
-        domain: s.domain,
-        archetype: s.archetype,
-        requiresMcp: s.requiresMcp,
-        mcpReady: advice?.ready ?? false,
-        source: s.source,
-      };
-    });
-    return {
-      content: [{ type: 'text' as const, text: JSON.stringify(all, null, 2) }],
-    };
-  }
-
-  const matches = skillCatalog.search(query, domain, serverChecker);
-  return {
-    content: [{ type: 'text' as const, text: JSON.stringify(matches.map(m => ({
-      skill: m.name,
-      description: m.description,
-      domain: m.domain,
-      archetype: m.archetype,
-      score: m.score,
-      mcpReady: m.mcpReady,
-      requiresMcp: m.requiresMcp,
-      mcpStatus: m.mcpStatus,
-      source: m.source,
-    })), null, 2) }],
-  };
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
-async function handleSkillAdvise(args?: Record<string, unknown>) {
-  const skillName = args?.skill as string;
-  if (!skillName) {
-    return {
-      content: [{ type: 'text' as const, text: 'Missing required parameter: skill' }],
-      isError: true,
-    };
-  }
-
-  const advice = skillCatalog.advise(skillName, serverChecker);
-  if (!advice) {
-    // Check if any gallery server matches - suggest installing
-    const { GALLERY } = await import('./gallery.js');
-    const galleryMatch = GALLERY.find(g =>
-      g.name.toLowerCase().includes(skillName.toLowerCase()) ||
-      skillName.toLowerCase().includes(g.name.toLowerCase().replace(/^@[^/]+\//, '').replace(/^(mcp-server-|server-)/, ''))
-    );
-
-    return {
-      content: [{ type: 'text' as const, text: JSON.stringify({
-        skill: skillName,
-        ready: false,
-        error: 'Skill not found',
-        suggestion: galleryMatch
-          ? `No skill "${skillName}" found, but there's an MCP server available: ${galleryMatch.name}. Install with: metamcp add ${skillName}`
-          : `No skill "${skillName}" found. Check ~/.claude/skills/ or .claude/skills/`,
-      }, null, 2) }],
-    };
-  }
-
-  return {
-    content: [{ type: 'text' as const, text: JSON.stringify(advice, null, 2) }],
-  };
+function recordGatewayCall(entry: {
+  tool: 'mcp_call' | 'mcp_run';
+  server: string | null;
+  childTool?: string;
+  durationMs: number;
+  success: boolean;
+  error?: string;
+}): Promise<void> {
+  return recordLedger({
+    timestamp: new Date().toISOString(),
+    tool: entry.tool,
+    server: entry.server,
+    childTool: entry.childTool,
+    duration_ms: entry.durationMs,
+    success: entry.success,
+    ...(entry.error ? { error: scrubSecrets(entry.error) } : {}),
+  });
 }
 
-async function ensureAllConnected(): Promise<void> {
-  for (const config of serverConfigs) {
-    if (!childManager.hasServer(config.name)) {
-      try {
-        await childManager.spawn(config);
-      } catch (err) {
-        log('error', 'failed to spawn server', {
-          server: config.name,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-  }
+function configFingerprint(config: ServerConfig): string {
+  return JSON.stringify(config);
 }
 
-function computeRegistryConfidence(intent: string, name: string, description: string): number {
-  const words = intent.toLowerCase().split(/\s+/).filter(w => w.length > 0);
-  const nameLower = name.toLowerCase();
-  const descLower = description.toLowerCase();
-  let score = 0;
+function isSelfReference(config: ServerConfig): boolean {
+  const command = config.command.toLowerCase().replaceAll('\\', '/');
+  const args = (config.args ?? []).join(' ').toLowerCase().replaceAll('\\', '/');
+  return command === 'metamcp'
+    || command.endsWith('/metamcp')
+    || args.includes('@mentu/metamcp')
+    || args.includes('/metamcp/dist/index.js')
+    || [config.command, ...(config.args ?? [])].some(candidate => resolvesToCurrentEntry(candidate));
+}
 
-  for (const word of words) {
-    if (nameLower === word) score += 10;
-    else if (nameLower.includes(word)) score += 5;
-    if (descLower.includes(word)) score += 2;
+function resolvesToCurrentEntry(candidate: string): boolean {
+  const current = fileURLToPath(import.meta.url);
+  const candidatePath = resolve(process.cwd(), candidate);
+  if (candidatePath === current) return true;
+  try {
+    return realpathSync(candidatePath) === realpathSync(current);
+  } catch {
+    return false;
   }
-
-  const maxPossible = words.length * 12;
-  return maxPossible > 0 ? Math.min(score / maxPossible, 1) : 0;
 }
 
 async function main() {
   cliOptions.httpPath = normalizeHttpPath(cliOptions.httpPath);
   serverConfigs = loadConfig(cliOptions.configPath);
+  const recursiveConfig = serverConfigs.find(isSelfReference);
+  if (recursiveConfig) {
+    throw new Error(`Refusing recursive MetaMCP child configuration: ${recursiveConfig.name}`);
+  }
 
   // Auto-discover servers from installed editors when --import is set
   if (cliOptions.importEditors) {
@@ -712,7 +657,7 @@ async function main() {
     const localNames = new Set(serverConfigs.map(s => s.name));
     let importCount = 0;
     for (const [name, { config, source }] of discovered) {
-      if (!localNames.has(name)) {
+      if (!localNames.has(name) && !isSelfReference(config)) {
         serverConfigs.push(config);
         importCount++;
         log('info', 'imported server from editor config', { name, source });
@@ -723,8 +668,15 @@ async function main() {
     }
   }
 
+  const cachedServerCount = childManager.loadCachedSchemas(serverConfigs);
+  const methodCount = methodRegistry.reload();
+
   log('info', 'config loaded', {
     serverCount: serverConfigs.length,
+    cachedServerCount,
+    methodCount,
+    methodsDir: cliOptions.methodsDir,
+    allowWrites: cliOptions.allowWrites,
     maxConnections: cliOptions.maxConnections,
     idleTimeout: cliOptions.idleTimeout,
     failureThreshold: cliOptions.failureThreshold,
@@ -759,30 +711,46 @@ async function main() {
   let reloadDebounce: ReturnType<typeof setTimeout> | null = null;
   let lastConfigMtime = 0;
 
-  function reloadConfig(): void {
+  async function reloadConfig(): Promise<void> {
     try {
       if (!existsSync(configPath)) return;
       const fresh = loadConfig(cliOptions.configPath);
-      const existing = new Set(serverConfigs.map(s => s.name));
-      let added = 0;
-      for (const cfg of fresh) {
-        if (!existing.has(cfg.name)) {
-          serverConfigs.push(cfg);
-          added++;
-          log('info', 'hot-reload: new server available', { name: cfg.name });
+      if (cliOptions.importEditors) {
+        const names = new Set(fresh.map(config => config.name));
+        for (const [name, { config }] of discoverExternalServers(process.cwd())) {
+          if (!names.has(name) && !isSelfReference(config)) {
+            fresh.push(config);
+            names.add(name);
+          }
         }
       }
-      if (added > 0) {
-        log('info', 'hot-reload complete', { added, total: serverConfigs.length });
+      const recursive = fresh.find(isSelfReference);
+      if (recursive) throw new Error(`Refusing recursive MetaMCP child configuration: ${recursive.name}`);
+      const oldByName = new Map(serverConfigs.map(config => [config.name, config]));
+      const freshByName = new Map(fresh.map(config => [config.name, config]));
+      const retired: string[] = [];
+      for (const [name, oldConfig] of oldByName) {
+        const freshConfig = freshByName.get(name);
+        if (!freshConfig || configFingerprint(oldConfig) !== configFingerprint(freshConfig)) {
+          await childManager.forget(name);
+          retired.push(name);
+        }
       }
-    } catch {
-      log('warn', 'hot-reload: failed to parse config');
+      serverConfigs = fresh;
+      const cached = childManager.loadCachedSchemas(serverConfigs);
+      log('info', 'hot-reload complete', {
+        total: serverConfigs.length,
+        retired: retired.length,
+        cached,
+      });
+    } catch (err) {
+      log('warn', 'hot-reload rejected; keeping the last valid config', { error: errorMessage(err) });
     }
   }
 
   function scheduleReload(): void {
     if (reloadDebounce) clearTimeout(reloadDebounce);
-    reloadDebounce = setTimeout(reloadConfig, 300);
+    reloadDebounce = setTimeout(() => { void reloadConfig(); }, 300);
   }
 
   // Strategy 1: fs.watch on the file (best latency, but only works if file exists)
@@ -858,6 +826,9 @@ async function startHttpTransport(): Promise<() => Promise<void>> {
   if (authConfig.mode === 'open') {
     log('warn', 'gateway is unauthenticated — set METAMCP_RESOURCE_URL + METAMCP_AUTH_ISSUER for OAuth, or METAMCP_HTTP_BEARER_TOKEN for a shared secret');
   }
+  if (authConfig.mode === 'open' && !isLoopbackHost(cliOptions.host)) {
+    throw new Error(`Refusing unauthenticated HTTP bind on ${cliOptions.host}; bind to loopback or configure gateway authentication`);
+  }
   // The resource identifier need not equal the path we serve MCP on, but a
   // mismatch is far more often a typo than an intent — and it produces tokens
   // whose audience names an endpoint that does not exist here.
@@ -870,7 +841,7 @@ async function startHttpTransport(): Promise<() => Promise<void>> {
 
   const httpServer = createServer(async (req, res) => {
     try {
-      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      const url = new URL(req.url ?? '/', 'http://localhost');
       if (url.pathname === '/healthz') {
         sendJson(res, 200, {
           ok: true,
@@ -896,6 +867,29 @@ async function startHttpTransport(): Promise<() => Promise<void>> {
 
       if (url.pathname !== cliOptions.httpPath) {
         sendJson(res, 404, { error: 'not_found' });
+        return;
+      }
+
+      const rawOrigin = req.headers.origin;
+      const origin = typeof rawOrigin === 'string' ? rawOrigin : undefined;
+      if (Array.isArray(rawOrigin) || (origin && !cliOptions.allowedOrigins.includes(origin))) {
+        res.setHeader('Vary', 'Origin');
+        sendJson(res, 403, { error: 'origin_not_allowed' });
+        return;
+      }
+      if (origin) {
+        res.setHeader('Vary', 'Origin');
+        res.setHeader('Access-Control-Allow-Origin', origin);
+      }
+      if (req.method === 'OPTIONS') {
+        res.statusCode = 204;
+        res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+        res.setHeader(
+          'Access-Control-Allow-Headers',
+          'Authorization, Content-Type, Accept, X-MetaMCP-Token, Mcp-Protocol-Version, Mcp-Method, Mcp-Name',
+        );
+        res.setHeader('Access-Control-Max-Age', '600');
+        res.end();
         return;
       }
 
@@ -967,9 +961,14 @@ async function startHttpTransport(): Promise<() => Promise<void>> {
 
 async function handleStatelessMcpPost(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const requestServer = createMetaMcpServer();
-  const transport = new StreamableHTTPServerTransport({
+  const innerTransport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
+  });
+  const transport = new DualEraServerTransport(innerTransport, {
+    serverInfo: { name: 'metamcp', version: readPackageVersion() },
+    capabilities: { tools: {} },
+    log,
   });
 
   let closed = false;
@@ -986,7 +985,17 @@ async function handleStatelessMcpPost(req: IncomingMessage, res: ServerResponse)
 
   await requestServer.connect(transport);
   const body = await readJsonBody(req);
-  await transport.handleRequest(req, res, body);
+  const headerError = validateModernHttpHeaders(req, body);
+  if (headerError) {
+    sendJson(res, 400, {
+      jsonrpc: '2.0',
+      id: isRecord(body) && ('id' in body) ? body.id : null,
+      error: { code: -32020, message: headerError },
+    });
+    await closeRequestServer();
+    return;
+  }
+  await innerTransport.handleRequest(req, res, body);
   if (res.writableEnded) await closeRequestServer();
 }
 
@@ -1024,6 +1033,45 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
       }
     });
   });
+}
+
+function validateModernHttpHeaders(req: IncomingMessage, body: unknown): string | undefined {
+  if (!isRecord(body) || typeof body.method !== 'string') return undefined;
+  const methodHeader = singleHeader(req.headers['mcp-method']);
+  if (methodHeader && methodHeader !== body.method) {
+    return `Mcp-Method header ${methodHeader} does not match body method ${body.method}`;
+  }
+
+  const params = isRecord(body.params) ? body.params : undefined;
+  const name = params && typeof params.name === 'string' ? params.name : undefined;
+  const nameHeader = singleHeader(req.headers['mcp-name']);
+  if (nameHeader && nameHeader !== name) {
+    return `Mcp-Name header ${nameHeader} does not match body name ${String(name)}`;
+  }
+
+  const meta = params && isRecord(params._meta) ? params._meta : undefined;
+  const bodyVersion = meta?.['io.modelcontextprotocol/protocolVersion'];
+  const versionHeader = singleHeader(req.headers['mcp-protocol-version']);
+  if (versionHeader && bodyVersion !== undefined && versionHeader !== bodyVersion) {
+    return `Mcp-Protocol-Version header ${versionHeader} does not match body protocol version ${String(bodyVersion)}`;
+  }
+  return undefined;
+}
+
+function singleHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  return normalized === 'localhost'
+    || normalized === '::1'
+    || normalized === '0:0:0:0:0:0:0:1'
+    || /^127(?:\.\d{1,3}){3}$/.test(normalized);
 }
 
 main().catch(err => {

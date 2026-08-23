@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { ConnectionState, canTransition, DEFAULT_POOL_CONFIG } from './types.js';
-import type { ServerConfig, ChildState, ToolDefinition, PoolConfig } from './types.js';
+import type { ChildCallOptions, ServerConfig, ChildState, ToolDefinition, PoolConfig } from './types.js';
 import { McpClient } from './mcp-client.js';
 import { ToolCatalog } from './catalog.js';
 import type { CatalogOptions } from './catalog.js';
@@ -28,6 +28,8 @@ export class ChildManager extends EventEmitter {
   private catalog: ToolCatalog;
   private pool: PoolConfig;
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
+  private spawnPromises = new Map<string, Promise<ToolDefinition[]>>();
+  private callQueues = new Map<string, Promise<unknown>>();
 
   /**
    * Idle list - LIFO ordered.
@@ -73,11 +75,25 @@ export class ChildManager extends EventEmitter {
   }
 
   async spawn(config: ServerConfig): Promise<ToolDefinition[]> {
-    if (this.children.size >= MAX_CHILDREN) {
+    const pending = this.spawnPromises.get(config.name);
+    if (pending) return pending;
+
+    const spawnPromise = this.spawnInternal(config);
+    this.spawnPromises.set(config.name, spawnPromise);
+    try {
+      return await spawnPromise;
+    } finally {
+      if (this.spawnPromises.get(config.name) === spawnPromise) {
+        this.spawnPromises.delete(config.name);
+      }
+    }
+  }
+
+  private async spawnInternal(config: ServerConfig): Promise<ToolDefinition[]> {
+    const existing = this.children.get(config.name);
+    if (!existing && this.children.size >= MAX_CHILDREN) {
       throw new Error(`Max children (${MAX_CHILDREN}) reached`);
     }
-
-    const existing = this.children.get(config.name);
     if (existing && existing.state !== ConnectionState.CLOSED && existing.state !== ConnectionState.FAILED) {
       if (existing.state === ConnectionState.IDLE || existing.state === ConnectionState.ACTIVE) {
         return this.catalog.getServerTools(config.name);
@@ -90,7 +106,7 @@ export class ChildManager extends EventEmitter {
     const upperBound = this.pool.poolSize + this.pool.resPoolSize;
     if (activeCount >= upperBound) {
       // Try to evict an idle child to make room
-      const evicted = this.evictPoolConnection();
+      const evicted = await this.evictPoolConnection();
       if (!evicted) {
         throw new Error(`Pool upper bound (${upperBound}) reached, no idle children to evict`);
       }
@@ -130,11 +146,18 @@ export class ChildManager extends EventEmitter {
       return tools;
     } catch (err) {
       this.setState(child, ConnectionState.FAILED);
+      await client.disconnect();
       throw err;
     }
   }
 
   async ensureConnected(name: string): Promise<void> {
+    const pending = this.spawnPromises.get(name);
+    if (pending) {
+      await pending;
+      return;
+    }
+
     const child = this.children.get(name);
     if (!child) throw new Error(`Unknown server: ${name}`);
 
@@ -151,7 +174,37 @@ export class ChildManager extends EventEmitter {
     }
   }
 
-  async callTool(serverName: string, toolName: string, args?: Record<string, unknown>): Promise<unknown> {
+  async callTool(
+    serverName: string,
+    toolName: string,
+    args?: Record<string, unknown>,
+    options: ChildCallOptions = {},
+  ): Promise<unknown> {
+    return this.enqueue(serverName, () => this.callToolOnce(serverName, toolName, args, options));
+  }
+
+  /** Re-read one connected child's live schemas without fanning out. */
+  async refreshSchemas(serverName: string): Promise<ToolDefinition[]> {
+    return this.enqueue(serverName, () => this.refreshSchemasOnce(serverName));
+  }
+
+  private async enqueue<T>(serverName: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.callQueues.get(serverName) ?? Promise.resolve();
+    const queued = previous.catch(() => undefined).then(operation);
+    this.callQueues.set(serverName, queued);
+    try {
+      return await queued;
+    } finally {
+      if (this.callQueues.get(serverName) === queued) this.callQueues.delete(serverName);
+    }
+  }
+
+  private async callToolOnce(
+    serverName: string,
+    toolName: string,
+    args: Record<string, unknown> | undefined,
+    options: ChildCallOptions,
+  ): Promise<unknown> {
     // Circuit breaker check
     const cbChild = this.children.get(serverName);
     if (cbChild?.circuitBreaker.isOpen()) {
@@ -166,49 +219,77 @@ export class ChildManager extends EventEmitter {
 
     this.setState(child, ConnectionState.ACTIVE);
     try {
-      const result = await child.client.callTool(toolName, args);
+      const result = await child.client.callTool(toolName, args, options);
       this.setState(child, ConnectionState.IDLE);
       child.circuitBreaker.recordSuccess();
       return result;
     } catch (err) {
-      const issue = analyzeConnectionError(err);
-      this.setState(child, ConnectionState.FAILED);
-
-      // Only transient errors count toward circuit breaker.
-      // Auth errors are not transient - tripping the breaker won't help.
-      if (isTransientIssue(issue)) {
-        child.circuitBreaker.recordFailure();
-      } else {
-        log('info', 'non-transient error, skipping circuit breaker', {
-          server: serverName,
-          kind: issue.kind,
-        });
-      }
-
-      // Retry once on crash (spawn → retry)
-      if (child.config.criticality === 'vital' || child.restartCount < 1) {
-        child.restartCount++;
-        try {
-          await this.spawn(child.config);
-          const fresh = this.children.get(serverName);
-          if (!fresh) throw err;
-          this.setState(fresh, ConnectionState.ACTIVE);
-          const result = await fresh.client.callTool(toolName, args);
-          this.setState(fresh, ConnectionState.IDLE);
-          fresh.circuitBreaker.recordSuccess();
-          return result;
-        } catch (retryErr) {
-          const retryIssue = analyzeConnectionError(retryErr);
-          const failed = this.children.get(serverName);
-          if (failed) this.setState(failed, ConnectionState.FAILED);
-          if (isTransientIssue(retryIssue)) {
-            this.children.get(serverName)?.circuitBreaker.recordFailure();
-          }
-          throw err;
-        }
-      }
+      await this.handleOperationFailure(serverName, child, err);
+      // Delivery may have succeeded before a transport failure or timeout.
+      // Never replay implicitly. A Method may opt into bounded retry only for
+      // a step explicitly declared idempotent.
       throw err;
     }
+  }
+
+  private async refreshSchemasOnce(serverName: string): Promise<ToolDefinition[]> {
+    await this.ensureConnected(serverName);
+    const child = this.children.get(serverName);
+    if (!child) throw new Error(`Unknown server: ${serverName}`);
+
+    this.setState(child, ConnectionState.ACTIVE);
+    try {
+      const previous = this.catalog.getServerTools(serverName);
+      const tools = await child.client.listTools();
+      this.catalog.registerServer(serverName, tools);
+      if (isCacheStale(previous, tools)) writeSchemaCache(serverName, tools);
+      this.setState(child, ConnectionState.IDLE);
+      child.circuitBreaker.recordSuccess();
+      return tools;
+    } catch (err) {
+      await this.handleOperationFailure(serverName, child, err);
+      throw err;
+    }
+  }
+
+  private async handleOperationFailure(serverName: string, child: ManagedChild, err: unknown): Promise<void> {
+    const issue = analyzeConnectionError(err);
+    const transient = isTransientIssue(issue);
+    this.setState(child, transient ? ConnectionState.FAILED : ConnectionState.IDLE);
+
+    // Only transient errors count toward the breaker and retire the transport.
+    if (transient) {
+      child.circuitBreaker.recordFailure();
+      // A timeout or broken transport leaves delivery ambiguous and the
+      // connection unusable. Reap it before returning so a later explicit
+      // call cannot inherit a live, orphaned operation.
+      await this.shutdown(serverName);
+    } else {
+      log('info', 'non-transient error, skipping circuit breaker', {
+        server: serverName,
+        kind: issue.kind,
+      });
+    }
+  }
+
+  /** Populate discovery from disk without spawning configured children. */
+  loadCachedSchemas(configs: readonly ServerConfig[]): number {
+    let loaded = 0;
+    for (const config of configs) {
+      const cached = readSchemaCache(config.name);
+      if (!cached) continue;
+      this.catalog.registerServer(config.name, cached.tools);
+      loaded++;
+    }
+    return loaded;
+  }
+
+  /** Shut down and forget a removed or changed configuration. */
+  async forget(name: string): Promise<void> {
+    await this.shutdown(name);
+    this.children.delete(name);
+    this.catalog.removeServer(name);
+    this.callQueues.delete(name);
   }
 
   /**
@@ -305,8 +386,9 @@ export class ChildManager extends EventEmitter {
   /** Synchronous kill of all child PIDs - last resort on crash. */
   killAllSync(): void {
     for (const child of this.children.values()) {
-      if (child.pid) {
-        try { process.kill(child.pid, 'SIGKILL'); } catch { /* already dead */ }
+      const pid = child.client.pid;
+      if (pid !== null) {
+        try { process.kill(pid, 'SIGKILL'); } catch { /* already dead */ }
       }
     }
   }
@@ -317,7 +399,7 @@ export class ChildManager extends EventEmitter {
   private startIdleSweep(): void {
     if (this.sweepTimer) return;
     const SWEEP_INTERVAL_MS = 60_000;
-    this.sweepTimer = setInterval(() => this.sweepIdle(), SWEEP_INTERVAL_MS);
+    this.sweepTimer = setInterval(() => { void this.sweepIdle(); }, SWEEP_INTERVAL_MS);
     this.sweepTimer.unref();
   }
 
@@ -333,7 +415,7 @@ export class ChildManager extends EventEmitter {
    *
    * Guard: only evict if minPoolSize == 0 OR activeCount > minPoolSize.
    */
-  private sweepIdle(): void {
+  private async sweepIdle(): Promise<void> {
     const now = Date.now();
     const globalCutoff = now - this.pool.idleTimeoutMs;
     for (let i = this.idleList.length - 1; i >= 0; i--) {
@@ -355,8 +437,9 @@ export class ChildManager extends EventEmitter {
         const perServerCutoff = now - lifecycle.idleTimeoutMs;
         if (child.idleSince > 0 && child.idleSince < perServerCutoff) {
           log('info', 'keep-alive idle timeout', { server: name, idleTimeoutMs: lifecycle.idleTimeoutMs });
-          this.setState(child, ConnectionState.CLOSED);
-          child.client.detach();
+          await this.shutdown(name);
+          this.children.delete(name);
+          this.callQueues.delete(name);
           this.catalog.removeServer(name);
         }
         continue;
@@ -365,8 +448,9 @@ export class ChildManager extends EventEmitter {
       // ephemeral or default: use global idle timeout
       if (child.idleSince > 0 && child.idleSince < globalCutoff) {
         log('info', 'idle timeout eviction', { server: name, idleSince: child.idleSince });
-        this.setState(child, ConnectionState.CLOSED);
-        child.client.detach();
+        await this.shutdown(name);
+        this.children.delete(name);
+        this.callQueues.delete(name);
         this.catalog.removeServer(name);
       }
     }
@@ -391,7 +475,7 @@ export class ChildManager extends EventEmitter {
    *
    * Returns true if a connection was evicted, false if idle list is empty.
    */
-  private evictPoolConnection(): boolean {
+  private async evictPoolConnection(): Promise<boolean> {
     if (this.idleList.length === 0) return false;
 
     // Evict from TAIL (oldest idle - LRU)
@@ -409,9 +493,9 @@ export class ChildManager extends EventEmitter {
       idleSince: child.idleSince,
     });
 
-    // Transition to CLOSED (removes from idle list via setState)
-    this.setState(child, ConnectionState.CLOSED);
-    child.client.detach();
+    await this.shutdown(name);
+    this.children.delete(name);
+    this.callQueues.delete(name);
     this.catalog.removeServer(name);
     return true;
   }
@@ -424,13 +508,13 @@ export class ChildManager extends EventEmitter {
    *
    * Reserve capacity only available when a request has been waiting >= resPoolTimeout.
    */
-  enforcePoolBounds(): { evicted: number; belowMinimum: boolean } {
+  async enforcePoolBounds(): Promise<{ evicted: number; belowMinimum: boolean }> {
     let evicted = 0;
     const upperBound = this.pool.poolSize + this.pool.resPoolSize;
 
     // Upper bound enforcement: evict excess idle children
     while (this.getActiveChildCount() > upperBound && this.idleList.length > 0) {
-      if (this.evictPoolConnection()) {
+      if (await this.evictPoolConnection()) {
         evicted++;
       } else {
         break;
@@ -495,7 +579,7 @@ export class ChildManager extends EventEmitter {
     return {
       name: child.config.name,
       state: child.state,
-      pid: child.pid,
+      pid: child.client.pid ?? undefined,
       toolCount: this.catalog.getServerTools(child.config.name).length,
       criticality: child.config.criticality,
       restartCount: child.restartCount,
@@ -506,7 +590,7 @@ export class ChildManager extends EventEmitter {
     return Array.from(this.children.values()).map(child => ({
       name: child.config.name,
       state: child.state,
-      pid: child.pid,
+      pid: child.client.pid ?? undefined,
       toolCount: this.catalog.getServerTools(child.config.name).length,
       criticality: child.config.criticality,
       restartCount: child.restartCount,

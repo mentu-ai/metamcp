@@ -178,7 +178,7 @@ export class InvestigationSession {
   }
 
   /**
-   * Record that a meta-method was used (mcp_discover, mcp_provision, mcp_execute).
+   * Record that a gateway method was used (mcp_discover, mcp_call, mcp_run).
    */
   recordMethod(method: string): void {
     this._methodsUsed.add(method);

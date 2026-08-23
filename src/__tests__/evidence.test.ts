@@ -144,7 +144,7 @@ async function runTests(): Promise<void> {
     session.recordCall('analyzer', 'analyze_data', { id: 'item-1' },
       'Analysis complete', 200, true, 'mcp_call');
     session.recordCall('web-server', 'get_data', {},
-      'Results ready', 50, true, 'mcp_execute');
+      'Results ready', 50, true, 'mcp_run');
 
     assertEqual(session.calls.length, 3, 'three calls');
     const servers = session.serversUsed.sort();
@@ -154,13 +154,13 @@ async function runTests(): Promise<void> {
     const methods = session.methodsUsed.sort();
     assertEqual(methods.length, 2, 'two methods');
     assertEqual(methods[0], 'mcp_call', 'mcp_call used');
-    assertEqual(methods[1], 'mcp_execute', 'mcp_execute used');
+    assertEqual(methods[1], 'mcp_run', 'mcp_run used');
   });
 
   await test('15. Session: recordMethod tracks standalone methods', () => {
     const session = new InvestigationSession('test', 'ev_test');
     session.recordMethod('mcp_discover');
-    session.recordMethod('mcp_provision');
+    session.recordMethod('mcp_run');
     session.recordMethod('mcp_discover'); // duplicate
     assertEqual(session.methodsUsed.length, 2, 'deduplicated');
   });

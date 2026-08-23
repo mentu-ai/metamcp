@@ -53,9 +53,9 @@ root_agent = LlmAgent(
     description="ADK agent that consumes a governed MetaMCP Cloud Run gateway through Agent Registry.",
     instruction=(
         "You are a production AI engineer agent. Use MetaMCP to discover and call "
-        "approved tools through mcp_discover, mcp_call, and mcp_execute. Prefer "
+        "approved tools through mcp_discover, mcp_call, and mcp_run. Prefer "
         "small, observable tool calls. When a tool can mutate business data, explain "
-        "the intended action before calling it and preserve the returned evidence IDs."
+        "the intended action before calling it and preserve Method traces and typed gaps."
     ),
     tools=[metamcp_tools],
 )

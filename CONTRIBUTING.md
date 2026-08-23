@@ -17,7 +17,7 @@ npm run build
 npm test
 ```
 
-This builds the project and runs the sandbox and child-manager test suites.
+This builds the project and runs unit, protocol, security, and end-to-end suites.
 
 ## Type Checking
 
@@ -31,11 +31,9 @@ npm run typecheck
 src/
   index.ts          # CLI entry point, MCP server, tool handlers
   child-manager.ts  # Connection pool, lifecycle, circuit breaker
-  sandbox.ts        # V8 sandbox for mcp_execute
+  methods.ts        # Declarative Method registry and bounded runtime
   catalog.ts        # Tool catalog with keyword search
-  intent.ts         # Intent-based routing (local + registry)
   config.ts         # .mcp.json loader
-  trust.ts          # Trust policy for auto-provisioning
   types.ts          # Shared types, FSM, pool config
   mcp-client.ts     # stdio MCP client wrapper
   circuit-breaker.ts
@@ -50,7 +48,7 @@ src/
 We use [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```
-feat(sandbox): add memory limit to V8 context
+feat(methods): add bounded status polling
 fix(pool): prevent double-eviction on concurrent calls
 docs: update CLI options table
 test(catalog): add fuzzy search edge cases
@@ -58,7 +56,7 @@ test(catalog): add fuzzy search edge cases
 
 **Types:** `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `ci`
 
-**Scopes:** `sandbox`, `pool`, `catalog`, `intent`, `trust`, `config`, `cli`
+**Scopes:** `methods`, `pool`, `catalog`, `transport`, `config`, `cli`, `security`
 
 ## Pull Request Guidelines
 

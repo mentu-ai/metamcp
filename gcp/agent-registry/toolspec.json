@@ -2,26 +2,16 @@
   "tools": [
     {
       "name": "mcp_discover",
-      "description": "Search tool catalogs across connected child MCP servers and list server status without exposing every child tool schema up front.",
+      "description": "Search configured servers, cached child tool schemas, and reviewed Methods without starting every child.",
       "annotations": {
-        "title": "Discover MCP Tools",
+        "title": "Discover MCP Capabilities",
         "readOnlyHint": true,
         "idempotentHint": true
       }
     },
     {
-      "name": "mcp_provision",
-      "description": "Resolve an intent to configured or registry-discovered MCP servers and suggest safe provisioning paths.",
-      "annotations": {
-        "title": "Provision MCP Capability",
-        "readOnlyHint": true,
-        "idempotentHint": false,
-        "openWorldHint": true
-      }
-    },
-    {
       "name": "mcp_call",
-      "description": "Forward a tool call to a specific child MCP server with lifecycle management, retries, secret scrubbing, and ledger evidence.",
+      "description": "Call one explicitly named child MCP tool. The target starts lazily and uncertain calls are never replayed implicitly.",
       "annotations": {
         "title": "Call Child MCP Tool",
         "readOnlyHint": false,
@@ -30,31 +20,13 @@
       }
     },
     {
-      "name": "mcp_execute",
-      "description": "Run JavaScript in a constrained V8 sandbox with access to provisioned MCP servers for multi-step workflows.",
+      "name": "mcp_run",
+      "description": "Run a reviewed, bounded, schema-validated declarative Method with typed gaps and trace evidence.",
       "annotations": {
-        "title": "Execute MCP Workflow",
+        "title": "Run MCP Method",
         "readOnlyHint": false,
         "idempotentHint": false,
         "openWorldHint": true
-      }
-    },
-    {
-      "name": "mcp_skill_discover",
-      "description": "Search local agent skills and report whether their companion MCP servers are configured and ready.",
-      "annotations": {
-        "title": "Discover Agent Skills",
-        "readOnlyHint": true,
-        "idempotentHint": true
-      }
-    },
-    {
-      "name": "mcp_skill_advise",
-      "description": "Perform a pre-flight readiness check for a named skill and recommend missing MCP server configuration.",
-      "annotations": {
-        "title": "Advise Skill Readiness",
-        "readOnlyHint": true,
-        "idempotentHint": true
       }
     }
   ]

@@ -8,8 +8,10 @@
  */
 
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
+import { InputRequiredError, ModernRequestError } from './modern-client.js';
 
-export type ConnectionIssueKind = 'auth' | 'offline' | 'http' | 'stdio-exit' | 'other';
+export type ConnectionIssueKind = 'auth' | 'offline' | 'http' | 'stdio-exit' | 'protocol' | 'other';
 
 export interface ConnectionIssue {
   kind: ConnectionIssueKind;
@@ -17,6 +19,7 @@ export interface ConnectionIssue {
   statusCode?: number;
   stdioExitCode?: number;
   stdioSignal?: string;
+  protocolCode?: number;
 }
 
 const AUTH_STATUSES = new Set([401, 403]);
@@ -59,6 +62,17 @@ export function analyzeConnectionError(error: unknown): ConnectionIssue {
     return { kind: 'auth', rawMessage };
   }
 
+  if (error instanceof InputRequiredError) {
+    return { kind: 'protocol', rawMessage };
+  }
+
+  if (error instanceof McpError || error instanceof ModernRequestError) {
+    if (error.code === ErrorCode.RequestTimeout || error.code === ErrorCode.ConnectionClosed) {
+      return { kind: 'offline', rawMessage, protocolCode: error.code };
+    }
+    return { kind: 'protocol', rawMessage, protocolCode: error.code };
+  }
+
   const stdio = extractStdioExit(rawMessage);
   if (stdio) {
     return { kind: 'stdio-exit', rawMessage, ...stdio };
@@ -94,7 +108,10 @@ export function isAuthIssue(issue: ConnectionIssue): boolean {
  * Check if an issue is transient (should count toward circuit breaker).
  */
 export function isTransientIssue(issue: ConnectionIssue): boolean {
-  return issue.kind === 'offline' || issue.kind === 'http' || issue.kind === 'other';
+  return issue.kind === 'offline'
+    || issue.kind === 'http'
+    || issue.kind === 'stdio-exit'
+    || issue.kind === 'other';
 }
 
 function extractMessage(error: unknown): string {

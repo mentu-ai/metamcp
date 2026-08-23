@@ -198,6 +198,16 @@ class RawJsonRpc {
       previous?.(message, extra);
       this.handle(message);
     };
+    const previousClose = transport.onclose;
+    transport.onclose = () => {
+      previousClose?.();
+      this.dispose('Transport closed');
+    };
+    const previousError = transport.onerror;
+    transport.onerror = (error) => {
+      previousError?.(error);
+      this.dispose(`Transport error: ${error.message}`);
+    };
   }
 
   private handle(message: JSONRPCMessage): void {

@@ -87,6 +87,24 @@ EXPECTED_VERSION="$(node -p "require('./package.json').version")"
 VERSION_OUT="$(node dist/index.js --version 2>&1 || true)"
 echo "$VERSION_OUT" | grep "$EXPECTED_VERSION" >/dev/null && check "--version prints package version" 1 || check "--version prints package version" 0
 
+if node dist/index.js --config >"$TMPDIR_PATH/missing-option.out" 2>&1; then
+  check "missing option value fails closed" 0
+else
+  grep 'requires a value' "$TMPDIR_PATH/missing-option.out" >/dev/null && check "missing option value fails closed" 1 || check "missing option value fails closed" 0
+fi
+
+if node dist/index.js init --bogus >"$TMPDIR_PATH/invalid-init.out" 2>&1; then
+  check "unknown init option fails closed" 0
+else
+  grep 'Unknown init option' "$TMPDIR_PATH/invalid-init.out" >/dev/null && check "unknown init option fails closed" 1 || check "unknown init option fails closed" 0
+fi
+
+if node dist/index.js add --bogus >"$TMPDIR_PATH/invalid-add.out" 2>&1; then
+  check "unknown add option fails closed" 0
+else
+  grep 'Unknown add option' "$TMPDIR_PATH/invalid-add.out" >/dev/null && check "unknown add option fails closed" 1 || check "unknown add option fails closed" 0
+fi
+
 # Derive the protocol version from the SDK instead of hardcoding one that
 # will silently age out of the supported list.
 PROTOCOL_VERSION="$(node -p "require('@modelcontextprotocol/sdk/types.js').LATEST_PROTOCOL_VERSION")"
@@ -120,8 +138,14 @@ node -e "const r=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));
 TOOLS_REQ='{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
 HTTP_TOOLS_STATUS="$(mcp_post "$HTTP_URL" "$TOOLS_REQ" "$HTTP_BODY")"
 [ "$HTTP_TOOLS_STATUS" = "200" ] && check "HTTP tools/list returns 200" 1 || check "HTTP tools/list returns 200" 0
-node -e "const r=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')); if (r.result.tools.length !== 6) process.exit(1)" "$HTTP_BODY" \
-  && check "HTTP tools/list returns six tools" 1 || check "HTTP tools/list returns six tools" 0
+node -e "const r=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')); const n=r.result.tools.map(t=>t.name).join(','); if (n !== 'mcp_discover,mcp_call,mcp_run') process.exit(1)" "$HTTP_BODY" \
+  && check "HTTP tools/list returns the three-tool surface" 1 || check "HTTP tools/list returns the three-tool surface" 0
+
+MODERN_DISCOVER_REQ='{"jsonrpc":"2.0","id":3,"method":"server/discover","params":{}}'
+MODERN_DISCOVER_STATUS="$(mcp_post "$HTTP_URL" "$MODERN_DISCOVER_REQ" "$HTTP_BODY")"
+[ "$MODERN_DISCOVER_STATUS" = "200" ] && check "HTTP modern server/discover returns 200" 1 || check "HTTP modern server/discover returns 200" 0
+node -e "const r=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')); if (!r.result.supportedVersions.includes('2026-07-28')) process.exit(1)" "$HTTP_BODY" \
+  && check "HTTP modern server/discover reports the modern era" 1 || check "HTTP modern server/discover reports the modern era" 0
 
 AUTH_PORT="$(free_port)"
 AUTH_URL="http://127.0.0.1:$AUTH_PORT"

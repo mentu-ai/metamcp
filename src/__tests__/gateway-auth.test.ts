@@ -1,7 +1,7 @@
 /**
  * Gateway Inbound Authorization Tests (RFC 9728 / RFC 8707, MCP 2026-07-28)
  *
- * Hand-rolled runner (same pattern as sandbox.test.ts).
+ * Hand-rolled test runner.
  * Import from .js extensions, run from dist/.
  *
  * Test groups:

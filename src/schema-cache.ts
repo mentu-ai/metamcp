@@ -8,14 +8,15 @@
  * returns different results.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, renameSync, unlinkSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import type { ToolDefinition } from './types.js';
+import { isValidServerName, type ToolDefinition } from './types.js';
 import { log } from './log.js';
 
-const CACHE_DIR = join(homedir(), '.metamcp', 'cache');
 const SCHEMA_FILENAME = 'schema.json';
+const MAX_CACHE_BYTES = 8 * 1024 * 1024;
+const MAX_CACHED_TOOLS = 10_000;
 
 export interface SchemaCacheSnapshot {
   updatedAt: string;
@@ -23,7 +24,9 @@ export interface SchemaCacheSnapshot {
 }
 
 function serverCachePath(serverName: string): string {
-  return join(CACHE_DIR, serverName, SCHEMA_FILENAME);
+  if (!isValidServerName(serverName)) throw new Error(`Invalid server name for schema cache: ${serverName}`);
+  const cacheDir = process.env.METAMCP_CACHE_DIR || join(homedir(), '.metamcp', 'cache');
+  return join(cacheDir, serverName, SCHEMA_FILENAME);
 }
 
 /**
@@ -33,10 +36,12 @@ export function readSchemaCache(serverName: string): SchemaCacheSnapshot | undef
   const filePath = serverCachePath(serverName);
   try {
     if (!existsSync(filePath)) return undefined;
+    if (statSync(filePath).size > MAX_CACHE_BYTES) return undefined;
     const raw = readFileSync(filePath, 'utf-8');
-    const parsed = JSON.parse(raw) as SchemaCacheSnapshot;
-    if (!parsed?.tools || !Array.isArray(parsed.tools)) return undefined;
-    return parsed;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed) || typeof parsed.updatedAt !== 'string' || !Array.isArray(parsed.tools)) return undefined;
+    if (parsed.tools.length > MAX_CACHED_TOOLS || !parsed.tools.every(tool => isToolDefinition(tool, serverName))) return undefined;
+    return parsed as unknown as SchemaCacheSnapshot;
   } catch {
     return undefined;
   }
@@ -48,12 +53,23 @@ export function readSchemaCache(serverName: string): SchemaCacheSnapshot | undef
 export function writeSchemaCache(serverName: string, tools: ToolDefinition[]): void {
   const filePath = serverCachePath(serverName);
   try {
-    mkdirSync(join(CACHE_DIR, serverName), { recursive: true });
+    mkdirSync(dirname(filePath), { recursive: true });
     const snapshot: SchemaCacheSnapshot = {
       updatedAt: new Date().toISOString(),
       tools,
     };
-    writeFileSync(filePath, JSON.stringify(snapshot, null, 2), 'utf-8');
+    const serialized = JSON.stringify(snapshot, null, 2);
+    if (Buffer.byteLength(serialized, 'utf-8') > MAX_CACHE_BYTES) {
+      throw new Error(`schema cache exceeds ${MAX_CACHE_BYTES} bytes`);
+    }
+    const temporary = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+    try {
+      writeFileSync(temporary, serialized, { encoding: 'utf-8', mode: 0o600 });
+      renameSync(temporary, filePath);
+    } catch (err) {
+      try { unlinkSync(temporary); } catch { /* no temporary file to remove */ }
+      throw err;
+    }
   } catch (err) {
     log('warn', 'failed to write schema cache', {
       server: serverName,
@@ -67,7 +83,36 @@ export function writeSchemaCache(serverName: string, tools: ToolDefinition[]): v
  * Returns true if cache should be updated.
  */
 export function isCacheStale(cached: ToolDefinition[], fresh: ToolDefinition[]): boolean {
-  if (cached.length !== fresh.length) return true;
-  const cachedSet = new Set(cached.map(t => `${t.name}:${t.description ?? ''}`));
-  return fresh.some(t => !cachedSet.has(`${t.name}:${t.description ?? ''}`));
+  return canonicalTools(cached) !== canonicalTools(fresh);
+}
+
+function canonicalTools(tools: ToolDefinition[]): string {
+  const sorted = [...tools].sort((a, b) =>
+    a.server.localeCompare(b.server) || a.name.localeCompare(b.name) || (a.description ?? '').localeCompare(b.description ?? '')
+  );
+  return JSON.stringify(canonicalize(sorted));
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.keys(value).sort().map(key => [key, canonicalize(value[key])]),
+    );
+  }
+  return value;
+}
+
+function isToolDefinition(value: unknown, serverName: string): value is ToolDefinition {
+  return isRecord(value)
+    && typeof value.name === 'string'
+    && value.name.length > 0
+    && value.name.length <= 256
+    && value.server === serverName
+    && (value.description === undefined || typeof value.description === 'string')
+    && (value.inputSchema === undefined || isRecord(value.inputSchema));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
