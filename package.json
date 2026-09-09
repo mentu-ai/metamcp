@@ -1,6 +1,6 @@
 {
   "name": "@mentu/metamcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "mcpName": "io.github.mentu-ai/metamcp",
   "description": "A secure on-demand gateway for long-tail MCP servers with lazy calls and declarative Method Mode.",
   "main": "dist/index.js",
