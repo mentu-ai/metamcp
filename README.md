@@ -243,6 +243,8 @@ metamcp add playwright sentry --config .mcp.json
 
 The runtime never installs packages in response to an MCP tool call. Installation remains an explicit CLI/user action.
 
+Gallery entries are either a local launcher (`command` + `args`) or a hosted Streamable HTTP endpoint (`url`, shown as 🌐 in `--list`). Hosted entries are written to `.mcp.json` as native remote servers; the gallery never routes a remote server through a stdio bridge package.
+
 ## Upgrade from 0.x
 
 Version 1.0 intentionally removes the model-facing provisioning, skill-advice, and JavaScript execution tools. It also changes HTTP binding, child environment inheritance, retries, and `init`. Read [Migration to 1.0](docs/MIGRATION-1.0.md) before upgrading.

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Gallery entries can now point at a hosted Streamable HTTP endpoint (`url`, optional `transportType`) instead of a local launcher; `metamcp add` writes them as native remote servers, exactly the shape `loadConfig` already accepts. A gallery entry carries a launcher or a `url`, never both, and never a bridge package such as `mcp-remote`.
+- Fixed the `apistatuscheck-mcp-server` gallery entry, which provisioned an unrunnable server: the published npm tarball ships `dist/index.js` without a shebang, so `npx` handed it to `sh`. The entry now targets the maintained `https://apistatuscheck.com/api/mcp` endpoint directly. Reported and first fixed by @shibley in #2.
+- Added an explicit inbound contribution license to `CONTRIBUTING.md`.
+
 ## v1.0.0
 
 Released 2026-08-22.

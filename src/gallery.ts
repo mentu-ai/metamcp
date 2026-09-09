@@ -15,8 +15,12 @@ export interface GalleryEntry {
   repository: string;
   category: string;
   language: string;
+  /** Local launcher. Mutually exclusive with `url`. */
   command?: string;
   args?: string[];
+  /** Hosted Streamable HTTP (or SSE) endpoint. Mutually exclusive with `command`/`args`. */
+  url?: string;
+  transportType?: 'http' | 'sse';
 }
 
 export const GALLERY: GalleryEntry[] = [
@@ -31,7 +35,7 @@ export const GALLERY: GalleryEntry[] = [
   { name: 'graphlit-mcp-server', description: 'Ingest anything from Slack, Discord, websites, Google Drive, Linear or GitHub into a Graphlit project - and then search ', repository: 'https://github.com/graphlit/graphlit-mcp-server', category: 'Knowledge & Memory', language: 'ts', command: 'npx', args: ["-y", "graphlit-mcp-server"] },
   { name: 'Skill_Seekers', description: 'Transform 17 source types (docs, GitHub repos, PDFs, videos, Jupyter, Confluence, Notion, Slack/Discord) into AI-ready s', repository: 'https://github.com/yusufkaraaslan/Skill_Seekers', category: 'Knowledge & Memory', language: 'py', command: 'uvx', args: ["Skill_Seekers"] },
   { name: 'mem0-mcp-selfhosted', description: 'Self-hosted mem0 MCP server for Claude Code with Qdrant vector search, Neo4j knowledge graph, and Ollama embeddings.', repository: 'https://github.com/elvismdev/mem0-mcp-selfhosted', category: 'Knowledge & Memory', language: 'py', command: 'uvx', args: ["mem0-mcp-selfhosted"] },
-  { name: 'apistatuscheck-mcp-server', description: 'Check real-time operational status of 285+ cloud services and APIs (AWS, GitHub, Stripe, OpenAI, Vercel, etc.) directly ', repository: 'https://github.com/shibley/apistatuscheck-mcp-server', category: 'Monitoring', language: 'ts', command: 'npx', args: ["-y", "mcp-remote", "https://apistatuscheck.com/api/mcp"] },
+  { name: 'apistatuscheck-mcp-server', description: 'Check real-time operational status of 285+ cloud services and APIs (AWS, GitHub, Stripe, OpenAI, Vercel, etc.) directly ', repository: 'https://github.com/shibley/apistatuscheck-mcp-server', category: 'Monitoring', language: 'ts', url: 'https://apistatuscheck.com/api/mcp' },
   { name: 'mcp-server-rag-web-browser', description: 'An MCP server for Apify\'s open-source RAG Web Browser Actor to perform web searches, scrape URLs, and return content in', repository: 'https://github.com/apify/mcp-server-rag-web-browser', category: 'Search & Data Extraction', language: 'ts', command: 'npx', args: ["-y", "mcp-server-rag-web-browser"] },
   { name: 'DOMShell', description: 'Browse the web using filesystem commands (ls, cd, grep, click).', repository: 'https://github.com/apireno/DOMShell', category: 'Browser Automation', language: 'ts', command: 'npx', args: ["-y", "DOMShell"] },
   { name: 'mcp-server-logs-sieve', description: 'Query, summarize, and trace logs in plain English across GCP Cloud Logging, AWS CloudWatch, Azure Log Analytics, Grafana', repository: 'https://github.com/Oluwatunmise-olat/mcp-server-logs-sieve', category: 'Monitoring', language: 'ts', command: 'npx', args: ["-y", "mcp-server-logs-sieve"] },
@@ -213,7 +217,7 @@ export async function runGalleryAdd(args: string[]): Promise<boolean> {
       for (const [cat, list] of cats) {
         process.stderr.write(`\n  ${cat} (${list.length})\n`);
         for (const e of list) {
-          const badge = e.language === 'ts' ? '📇' : e.language === 'py' ? '🐍' : e.language === 'go' ? '🏎️' : '  ';
+          const badge = e.url ? '🌐' : e.language === 'ts' ? '📇' : e.language === 'py' ? '🐍' : e.language === 'go' ? '🏎️' : '  ';
           process.stderr.write(`    ${badge} ${e.name.padEnd(45)} ${e.description.slice(0, 60)}\n`);
         }
       }
@@ -245,7 +249,7 @@ export async function runGalleryAdd(args: string[]): Promise<boolean> {
   if (matched.length === 0) return false;
 
   const provisionable = matched.filter(entry => {
-    if (entry.command && entry.args?.length) return true;
+    if (isProvisionable(entry)) return true;
     process.stderr.write(`Gallery entry "${entry.name}" is metadata-only and cannot be provisioned automatically\n`);
     return false;
   });
@@ -280,10 +284,7 @@ export async function runGalleryAdd(args: string[]): Promise<boolean> {
       skipped.push(key);
       continue;
     }
-    const serverEntry: { command?: string; args?: string[]; env?: Record<string, string> } = {};
-    if (entry.command) serverEntry.command = entry.command;
-    if (entry.args) serverEntry.args = entry.args;
-    config.mcpServers[key] = serverEntry;
+    config.mcpServers[key] = toServerEntry(entry);
     added.push(key);
   }
 
@@ -316,6 +317,40 @@ export async function runGalleryAdd(args: string[]): Promise<boolean> {
     process.stderr.write(`Config: ${cfgPath}\n`);
   }
   return true;
+}
+
+/**
+ * A gallery entry can be provisioned when it carries exactly one of a local
+ * launcher (`command` + `args`) or a hosted endpoint (`url`). Entries with
+ * neither are metadata-only; entries with both are malformed and refused.
+ */
+export function isProvisionable(entry: GalleryEntry): boolean {
+  const hasLauncher = Boolean(entry.command && entry.args?.length);
+  const hasEndpoint = entry.url !== undefined;
+  if (hasLauncher === hasEndpoint) return false;
+  if (hasEndpoint) return isRemoteMcpUrl(entry.url as string);
+  return true;
+}
+
+function isRemoteMcpUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+/** The `.mcp.json` server object for an entry, in the shape `loadConfig` accepts. */
+export function toServerEntry(entry: GalleryEntry): Record<string, unknown> {
+  if (entry.url !== undefined) {
+    const remote: { url: string; transportType?: 'http' | 'sse' } = { url: entry.url };
+    if (entry.transportType) remote.transportType = entry.transportType;
+    return remote;
+  }
+  const local: { command?: string; args?: string[] } = {};
+  if (entry.command) local.command = entry.command;
+  if (entry.args) local.args = entry.args;
+  return local;
 }
 
 function validateGalleryArgs(args: string[]): void {

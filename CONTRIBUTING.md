@@ -71,3 +71,18 @@ test(catalog): add fuzzy search edge cases
 ## Reporting Issues
 
 Use [GitHub Issues](https://github.com/mentu-ai/metamcp/issues) with the provided templates. For security vulnerabilities, see [SECURITY.md](SECURITY.md).
+
+## License
+
+By submitting a contribution you grant Mentu a perpetual, worldwide,
+non-exclusive, irrevocable, royalty-free license to use, reproduce, modify,
+prepare derivative works of, publicly display, distribute, sublicense and
+relicense your contribution and any derivative works, including under
+commercial terms and under licenses other than the one in this repository.
+
+You confirm that you wrote the contribution yourself, or otherwise have the
+right to grant this license, and that it does not knowingly include third-party
+code you are not permitted to submit.
+
+Your contribution reaches everyone else under the license in this repository
+(Apache License 2.0). You keep the copyright in what you wrote.

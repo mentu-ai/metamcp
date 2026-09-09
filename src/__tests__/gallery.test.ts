@@ -1,7 +1,8 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { GALLERY, runGalleryAdd } from '../gallery.js';
+import { GALLERY, isProvisionable, runGalleryAdd, toServerEntry } from '../gallery.js';
+import { loadConfig } from '../config.js';
 
 let passed = 0;
 let failed = 0;
@@ -47,9 +48,46 @@ await test('provisionable entries have a complete launcher', () => {
       assert(entry.args === undefined, `${entry.name}: args provided without a command`);
       continue;
     }
+    assert(entry.url === undefined, `${entry.name}: command and url are mutually exclusive`);
     assert(entry.command.trim().length > 0, `${entry.name}: empty command`);
     assert(Array.isArray(entry.args) && entry.args.length > 0, `${entry.name}: command has no args`);
     assert(entry.args.every(arg => arg.trim().length > 0), `${entry.name}: launcher has an empty arg`);
+  }
+});
+
+await test('hosted entries point at an HTTPS endpoint and never at a bridge package', () => {
+  for (const entry of GALLERY) {
+    if (entry.url !== undefined) {
+      assert(entry.url.startsWith('https://'), `${entry.name}: hosted endpoint must use HTTPS`);
+      assert(isProvisionable(entry), `${entry.name}: hosted entry is not provisionable`);
+    }
+    assert(!(entry.args ?? []).includes('mcp-remote'), `${entry.name}: remote servers use url, not an mcp-remote bridge`);
+  }
+  assert(!isProvisionable({ name: 'x', description: 'x', repository: 'https://x', category: 'x', language: 'ts', url: 'http://insecure.example/mcp' }), 'plain HTTP endpoint was accepted');
+  assert(!isProvisionable({ name: 'x', description: 'x', repository: 'https://x', category: 'x', language: 'ts', url: 'https://x/mcp', command: 'npx', args: ['x'] }), 'entry with both launcher and url was accepted');
+  assert(!isProvisionable({ name: 'x', description: 'x', repository: 'https://x', category: 'x', language: 'ts' }), 'metadata-only entry was accepted');
+});
+
+await test('apistatuscheck is provisioned as a native Streamable HTTP server', async () => {
+  const entry = GALLERY.find(e => e.name === 'apistatuscheck-mcp-server');
+  assert(entry !== undefined, 'apistatuscheck-mcp-server is missing');
+  assert(entry.command === undefined && entry.args === undefined, 'apistatuscheck must not launch a local process');
+  assert(entry.url === 'https://apistatuscheck.com/api/mcp', 'apistatuscheck endpoint is incorrect');
+  assert(JSON.stringify(toServerEntry(entry)) === JSON.stringify({ url: 'https://apistatuscheck.com/api/mcp' }), 'server entry shape is incorrect');
+
+  const root = mkdtempSync(join(tmpdir(), 'metamcp-gallery-http-'));
+  try {
+    const path = join(root, 'mcp.json');
+    const added = await runGalleryAdd(['apistatuscheck', '--config', path, '--json']);
+    assert(added, 'apistatuscheck was not added');
+    const written = JSON.parse(readFileSync(path, 'utf-8')) as { mcpServers?: Record<string, Record<string, unknown>> };
+    assert(written.mcpServers?.apistatuscheck?.url === 'https://apistatuscheck.com/api/mcp', 'url was not written');
+    assert(!('command' in (written.mcpServers?.apistatuscheck ?? {})), 'a command was written for a hosted server');
+    const [server] = loadConfig(path);
+    assert(server?.name === 'apistatuscheck', 'loadConfig did not accept the written entry');
+    assert(server.transport === 'http' && server.url === 'https://apistatuscheck.com/api/mcp', 'loadConfig did not resolve a Streamable HTTP transport');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
