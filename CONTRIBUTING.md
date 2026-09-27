@@ -60,6 +60,11 @@ test(catalog): add fuzzy search edge cases
 
 **Scopes:** `methods`, `pool`, `catalog`, `transport`, `config`, `cli`, `security`
 
+**Attribution.** A commit is signed by its author and carries no AI attribution: no
+`Co-Authored-By: Claude`, no co-author at Anthropic, no "Generated with Claude Code". CI checks
+every commit pushed from 2026-09-27 on (`.github/workflows/no-ai-attribution.yml`). Earlier history is
+left as it was written, because its commits are tagged and released.
+
 ## Pull Request Guidelines
 
 - One PR per feature or fix

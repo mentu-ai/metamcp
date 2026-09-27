@@ -1,0 +1,52 @@
+name: No AI attribution
+# Commits to this repository carry no AI attribution: no "Co-Authored-By: Claude",
+# no co-author at Anthropic, no "Generated with Claude Code". The work is signed by
+# its author. This checks only the commits a push or pull request adds, so history
+# written before the rule does not fail every later run.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Reject AI attribution in the new commits
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -eu
+          zero=0000000000000000000000000000000000000000
+          if [ "$EVENT" = "pull_request" ]; then
+            range="$PR_BASE..$PR_HEAD"
+          elif [ -z "$BEFORE" ] || [ "$BEFORE" = "$zero" ]; then
+            range="$AFTER^!"          # a new branch or a manual run: the tip alone
+          else
+            range="$BEFORE..$AFTER"
+          fi
+          # Anchored to the start of a line: a trailer or a footer is a line of its own,
+          # while prose that merely names one (as this repository's commits sometimes do)
+          # is not. Case-insensitive, so Co-authored-by is covered too.
+          pattern='^[[:space:]]*Co-Authored-By:.*(Claude|Anthropic|noreply@anthropic)|^[[:space:]]*(🤖[[:space:]]*)?Generated with \[?Claude'
+          bad=""
+          for c in $(git rev-list "$range"); do
+            if git log -1 --format=%B "$c" | grep -Eiq "$pattern"; then
+              bad="$bad $(git log -1 --format='%h %s' "$c");"
+            fi
+          done
+          if [ -n "$bad" ]; then
+            echo "::error::AI attribution in commit message:$bad Remove the trailer and push again."
+            exit 1
+          fi
+          echo "No AI attribution in $range."
