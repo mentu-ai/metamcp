@@ -25,6 +25,8 @@
 
 import type { Transport, TransportSendOptions } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { JSONRPCMessage, MessageExtraInfo, RequestId } from '@modelcontextprotocol/sdk/types.js';
+import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
+import { InvalidAuthorizationUrlError } from './oauth-browser.js';
 import {
   FIRST_MODERN_PROTOCOL_VERSION,
   isModernProtocolVersion,
@@ -206,7 +208,7 @@ class RawJsonRpc {
     const previousError = transport.onerror;
     transport.onerror = (error) => {
       previousError?.(error);
-      this.dispose(`Transport error: ${error.message}`);
+      this.dispose(error);
     };
   }
 
@@ -253,11 +255,11 @@ class RawJsonRpc {
   }
 
   /** Fail every in-flight request; called when the session is torn down. */
-  dispose(reason: string): void {
+  dispose(reason: string | Error): void {
     this.closed = true;
     for (const [, waiter] of this.pending) {
       clearTimeout(waiter.timer);
-      waiter.reject(new Error(reason));
+      waiter.reject(reason instanceof Error ? reason : new Error(reason));
     }
     this.pending.clear();
   }
@@ -277,7 +279,8 @@ export interface EraProbe {
 /**
  * Decide a child's era by asking `server/discover` before any handshake.
  *
- * Always resolves. Anything other than a usable modern answer resolves to
+ * Authorization failures propagate so the caller can authorize before choosing
+ * an era. Anything else without a usable modern answer resolves to
  * `legacy`, because the legacy path is the one that already works — a probe
  * failure must never turn a reachable child into an unreachable one.
  *
@@ -307,6 +310,7 @@ export async function probeChildEra(
         : undefined;
     return { era: 'modern', supportedVersions: modern, capabilities };
   } catch (err) {
+    if (err instanceof UnauthorizedError || err instanceof InvalidAuthorizationUrlError) throw err;
     if (err instanceof ModernRequestError && err.code === METHOD_NOT_FOUND) {
       // The expected, healthy answer from a legacy server.
       return { era: 'legacy' };

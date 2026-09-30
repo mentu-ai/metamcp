@@ -186,7 +186,8 @@ export class LoopbackCallbackServer {
   private constructor(
     private readonly server: Server,
     readonly port: number,
-    capture: Promise<CallbackParams>
+    capture: Promise<CallbackParams>,
+    private readonly rejectCapture: (error: Error) => void,
   ) {
     this.captured = capture;
   }
@@ -208,7 +209,12 @@ export class LoopbackCallbackServer {
         res.end();
         return;
       }
-      const parsed = new URL(req.url, 'http://127.0.0.1');
+      let parsed: URL;
+      try { parsed = new URL(req.url, 'http://127.0.0.1'); }
+      catch { res.writeHead(400); res.end(); return; }
+      if (req.method !== 'GET' || parsed.pathname !== '/callback') {
+        res.writeHead(404); res.end(); return;
+      }
       const code = parsed.searchParams.get('code');
       const error = parsed.searchParams.get('error');
 
@@ -222,8 +228,8 @@ export class LoopbackCallbackServer {
         });
       } else {
         const msg = error ?? 'No authorization code in callback';
-        res.writeHead(400, { 'Content-Type': 'text/html' });
-        res.end(`<html><body><h1>Error</h1><p>${msg}</p></body></html>`);
+        res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Authorization failed. You can close this tab.');
         rejectParams(new OAuthCallbackError(`OAuth callback error: ${msg}`));
       }
     });
@@ -239,7 +245,7 @@ export class LoopbackCallbackServer {
     });
 
     const port = (server.address() as AddressInfo).port;
-    return new LoopbackCallbackServer(server, port, capture);
+    return new LoopbackCallbackServer(server, port, capture, rejectParams);
   }
 
   get redirectUrl(): string {
@@ -273,6 +279,7 @@ export class LoopbackCallbackServer {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.rejectCapture(new OAuthCallbackError('OAuth callback listener closed'));
     this.server.close();
   }
 }

@@ -9,13 +9,13 @@
  * Subsequent runs: loads persisted tokens, SDK auto-refreshes if expired.
  */
 
-import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, unlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { OAuthClientMetadata, OAuthClientInformationMixed, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { LoopbackCallbackServer, generateState, stepUpScope, type AuthChallenge } from './oauth-hardening.js';
+import { authorizationUrlString, openAuthorizationBrowser } from './oauth-browser.js';
 
 export interface OAuthProviderOptions {
   /**
@@ -32,6 +32,8 @@ export interface OAuthProviderOptions {
 export class FileOAuthProvider implements OAuthClientProvider {
   private readonly dir: string;
   private callback: LoopbackCallbackServer | null = null;
+  /** Token exchange must use the same URI even after the listener closes. */
+  private callbackUrl?: string;
   readonly clientMetadataUrl?: string;
   /** Widened by step-up; persisted so it survives a reconnect. */
   private scope?: string;
@@ -50,7 +52,10 @@ export class FileOAuthProvider implements OAuthClientProvider {
    * `redirectUrl`, because the port is assigned by the OS rather than fixed.
    */
   async prepare(): Promise<void> {
-    if (!this.callback) this.callback = await LoopbackCallbackServer.start();
+    if (!this.callback) {
+      this.callback = await LoopbackCallbackServer.start();
+      this.callbackUrl = this.callback.redirectUrl;
+    }
   }
 
   /**
@@ -60,6 +65,7 @@ export class FileOAuthProvider implements OAuthClientProvider {
   dispose(): void {
     this.callback?.close();
     this.callback = null;
+    this.callbackUrl = undefined;
   }
 
   /** Scope currently requested at authorization time. */
@@ -87,10 +93,10 @@ export class FileOAuthProvider implements OAuthClientProvider {
   }
 
   get redirectUrl(): string {
-    if (!this.callback) {
+    if (!this.callbackUrl) {
       throw new Error(`OAuth callback listener not started for ${this.serverName} — call prepare() first`);
     }
-    return this.callback.redirectUrl;
+    return this.callbackUrl;
   }
 
   get clientMetadata(): OAuthClientMetadata {
@@ -132,10 +138,16 @@ export class FileOAuthProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
-    const url = authorizationUrl.toString();
+    let url: string;
+    try {
+      url = authorizationUrlString(authorizationUrl);
+    } catch (error) {
+      this.dispose();
+      throw error;
+    }
 
     try {
-      execSync(`open "${url}"`, { stdio: 'ignore' });
+      await openAuthorizationBrowser(authorizationUrl);
     } catch {
       process.stderr.write(`\n[MetaMCP] Open this URL to authorize ${this.serverName}:\n  ${url}\n\n`);
     }

@@ -10,7 +10,9 @@ import {
   PreStartedTransport,
   probeChildEra,
   ModernMcpSession,
+  unwrapTransport,
   type ChildEra,
+  type EraProbe,
 } from './modern-client.js';
 import { log } from './log.js';
 import type { ChildProcess } from 'node:child_process';
@@ -83,6 +85,17 @@ export class McpClient {
   }
 
   async connect(): Promise<void> {
+    try {
+      await this.connectTransport();
+    } catch (error) {
+      await this.disconnect();
+      throw error;
+    } finally {
+      this.authProvider?.dispose();
+    }
+  }
+
+  private async connectTransport(): Promise<void> {
     if (this.config.transport === 'http' && this.config.url) {
       // Remote HTTP (Streamable HTTP) transport
       if (this.config.oauth) {
@@ -124,7 +137,14 @@ export class McpClient {
     // keeps the already-running transport reusable by the SDK client below.
     const framed = new PreStartedTransport(this.transport);
     await framed.start();
-    const probe = await probeChildEra(framed, { timeoutMs: ERA_PROBE_TIMEOUT_MS });
+    let probe: EraProbe;
+    try {
+      probe = await probeChildEra(framed, { timeoutMs: ERA_PROBE_TIMEOUT_MS });
+    } catch (error) {
+      if (!(error instanceof UnauthorizedError) || !this.authProvider) throw error;
+      await this.finishAuthorization();
+      probe = await probeChildEra(framed, { timeoutMs: ERA_PROBE_TIMEOUT_MS });
+    }
     this.era = probe.era;
 
     if (probe.era === 'modern') {
@@ -159,9 +179,13 @@ export class McpClient {
     } catch (err) {
       if (err instanceof UnauthorizedError && this.authProvider) {
         log('info', 'oauth authorization required, waiting for browser callback', { server: this.config.name });
-        const code = await this.authProvider.waitForCallback();
-        await (this.transport as StreamableHTTPClientTransport).finishAuth(code);
-        // Reconnect with fresh client after auth
+        await this.finishAuthorization();
+        // SDK Client.connect closes a failed transport. Use a fresh HTTP
+        // transport rather than reusing its aborted controller/wrapper.
+        const transport = new StreamableHTTPClientTransport(new URL(this.config.url!), {
+          authProvider: this.authProvider,
+        });
+        this.transport = transport;
         this.client = new Client({ name: 'metamcp', version: '1.0.0' });
         await this.client.connect(this.transport);
       } else {
@@ -177,6 +201,15 @@ export class McpClient {
     // never used — release it either way (dispose is idempotent) so every
     // successful OAuth connect doesn't leave a loopback socket open.
     this.authProvider?.dispose();
+  }
+
+  private async finishAuthorization(): Promise<void> {
+    const transport = unwrapTransport(this.transport);
+    if (!this.authProvider || !(transport instanceof StreamableHTTPClientTransport)) {
+      throw new Error('OAuth authorization requires an HTTP transport');
+    }
+    const code = await this.authProvider.waitForCallback();
+    await transport.finishAuth(code);
   }
 
   /**
